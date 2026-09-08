@@ -1,0 +1,79 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.local
+.token_store.json
+*token*.json
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+
+# Coverage, test and profiling output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+prof/
+*.prof
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+conda-meta/
+
+# Packaging and build output
+build/
+dist/
+site/
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+*.pid.lock
+*.out
+
+# Local databases and database dumps
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.dump
+*.backup
+
+# IDE and editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local project planning and development records
+# Keep repository-facing Markdown such as /README.md trackable.
+/docs_private/

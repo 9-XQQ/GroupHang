@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>出行规划 Agent · Phase 1</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e3e5e9;
+    --text: #1f2329;
+    --muted: #8a919c;
+    --primary: #3370ff;
+    --green: #00b578;
+    --orange: #ff8800;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+  }
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  header .hint { color: var(--muted); font-size: 12px; }
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 16px;
+    padding: 16px;
+    min-height: calc(100vh - 60px);
+  }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .panel h2 { font-size: 13px; margin: 0 0 2px; color: var(--muted); font-weight: 600; }
+  .row { display: flex; gap: 8px; }
+  input, select, button {
+    font: inherit;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, select:focus { outline: none; border-color: var(--primary); }
+  button {
+    cursor: pointer;
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  button.secondary { background: #fff; color: var(--text); border-color: var(--border); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 20px;
+    font-size: 12px;
+    background: #eef2ff;
+    color: var(--primary);
+  }
+  .tag.green { background: #e7f7f0; color: var(--green); }
+  .tag.orange { background: #fff3e6; color: var(--orange); }
+  #map { height: 100%; min-height: 420px; border-radius: 10px; border: 1px solid var(--border); background: #eef1f5; }
+  canvas#fallback { width: 100%; height: 100%; min-height: 420px; display: block; }
+  #mapWrap { position: relative; height: 100%; min-height: 420px; }
+  .map-tip {
+    position: absolute; top: 10px; left: 10px; right: 10px;
+    background: #fff9e6; color: #8a6d00; border: 1px solid #f0e3b0;
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; display: none; z-index: 10;
+  }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: #fafbfc; color: var(--muted); font-weight: 600; }
+  .cand-block { margin-bottom: 14px; }
+  .cand-title { font-weight: 600; margin-bottom: 4px; }
+  .vote-bar { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+  .vote-btn { background: #fff; color: var(--text); border-color: var(--border); padding: 5px 10px; }
+  .vote-btn.active-up { color: var(--green); border-color: var(--green); background: #e7f7f0; }
+  .vote-btn.active-down { color: #d4380d; border-color: #d4380d; background: #fff0f0; }
+  .destination-card { border: 1px solid var(--border); border-radius: 8px; padding: 9px; margin-top: 7px; }
+  .destination-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .destination-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+  .destination-actions button, .destination-actions select { padding: 4px 8px; font-size: 12px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .log { color: var(--muted); font-size: 12px; min-height: 16px; }
+  .err { color: #d4380d; font-size: 12px; }
+  details { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: #fafbfc; }
+  summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+  .cfg { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+  .cfg label { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>📍 出行规划 Agent · v0.2（多人多地点规划）</h1>
+  <span class="hint" id="userInfo">未登录</span>
+  <button id="logoutButton" class="secondary" style="display:none;padding:4px 8px" onclick="clearSession()">退出登录</button>
+</header>
+
+<div class="layout">
+  <!-- 左侧操作面板 -->
+  <div class="panel" id="sidePanel">
+    <details>
+      <summary>⚙️ 高德 JS Key 配置（地图需要）</summary>
+      <div class="cfg">
+        <label>JS API Key（Web端，非 Web服务 Key）</label>
+        <input id="amapKey" placeholder="粘贴 JS API Key" />
+        <label>安全密钥 securityJsCode（JS API 2.0 必填）</label>
+        <input id="amapSec" placeholder="粘贴 securityJsCode" />
+        <button class="secondary" onclick="saveAmapCfg()">保存并加载地图</button>
+      </div>
+    </details>
+
+    <div>
+      <h2>1. 登录</h2>
+      <div class="row">
+        <input id="phone" placeholder="11位手机号" inputmode="numeric" maxlength="11"
+               pattern="1[3-9][0-9]{9}" autocomplete="tel" style="flex:1" />
+        <input id="name" placeholder="昵称（选填，默认用户+尾号）" maxlength="50" style="width:150px" />
+        <button onclick="doLogin()">登录</button>
+      </div>
+    </div>
+
+    <div>
+      <h2>2. 创建 / 加入 trip</h2>
+      <div class="row">
+        <input id="tripTitle" placeholder="trip 标题" style="flex:1" />
+        <button onclick="doCreateTrip()">创建</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <input id="inviteCode" placeholder="邀请码" style="flex:1" />
+        <button onclick="doJoinTrip()">加入</button>
+      </div>
+      <div class="log" id="tripInfo"></div>
+    </div>
+
+    <div>
+      <h2>3. 我的出发点</h2>
+      <div class="row">
+        <label><input type="radio" name="mode" value="driving" checked /> 自驾</label>
+        <label><input type="radio" name="mode" value="transit" /> 公交/步行/打车</label>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <input id="lat" placeholder="纬度" style="flex:1" />
+        <input id="lng" placeholder="经度" style="flex:1" />
+        <button onclick="submitStart()">提交</button>
+      </div>
+      <div class="log">点地图可直接取坐标（自动填入上方）</div>
+      <div class="log" id="pickedStatus">尚未选择地图位置</div>
+      <div class="log" id="startStatus" style="color:#8a919c"></div>
+    </div>
+
+    <div>
+      <h2>4. 参与者</h2>
+      <div class="row">
+        <button class="secondary" onclick="refreshParticipants()" style="flex:1">刷新参与者</button>
+      </div>
+      <div id="participantList" class="log"></div>
+    </div>
+
+    <div>
+      <h2>5. 约点推荐</h2>
+      <div class="row">
+        <select id="objective">
+          <option value="minimax">公平优先（最小化最长通勤）</option>
+          <option value="min_sum">效率优先（最小化总耗时）</option>
+        </select>
+        <button onclick="doRecommend()">生成推荐</button>
+      </div>
+      <div class="log" id="recommendLog"></div>
+    </div>
+
+    <div>
+      <h2>6. 共同添加想去地点（Phase 2A）</h2>
+      <input id="destinationName" placeholder="地点名称" maxlength="120" style="width:100%" />
+      <input id="destinationAddress" placeholder="地址（选填）" maxlength="300" style="width:100%;margin-top:6px" />
+      <div class="row" style="margin-top:6px">
+        <label class="muted" for="destinationStay" style="align-self:center;white-space:nowrap">预计停留（分钟）</label>
+        <input id="destinationStay" type="number" min="5" max="720" value="60" aria-label="预计停留分钟" style="width:82px" />
+        <button onclick="addDestination()" style="flex:1">用地图选点添加</button>
+      </div>
+      <div class="log">先点击地图选坐标；所有成员可添加和投票，发起人可确认状态。</div>
+      <div class="log">将至少两个地点设为“必去/可选”后，可在下方按总时间或总路线生成访问顺序。</div>
+      <div id="destinationList"></div>
+    </div>
+
+    <div>
+      <h2>7. 多地点路线规划（Phase 2B）</h2>
+      <label class="muted">开始时间</label><input id="planStart" type="datetime-local" style="width:100%" />
+      <label class="muted">结束时间</label><input id="planEnd" type="datetime-local" style="width:100%" />
+      <div class="row">
+        <select id="groupMode"><option value="transit">共同公交/步行</option><option value="driving">共同自驾</option></select>
+        <select id="planObjective"><option value="balanced">均衡</option><option value="total_time">总时间最短</option><option value="distance">总路线最短</option></select>
+      </div>
+      <div class="row"><button onclick="savePlanningSettings()" class="secondary">保存参数</button><button onclick="generateItinerary()" style="flex:1">规划全部地点</button></div>
+      <div class="log" id="planLog"></div>
+    </div>
+  </div>
+
+  <!-- 右侧地图 -->
+  <div id="mapWrap">
+    <div id="map"></div>
+    <canvas id="fallback" style="display:none"></canvas>
+    <div class="map-tip" id="mapTip"></div>
+  </div>
+</div>
+
+<!-- 底部结果 -->
+<div style="padding:0 16px 16px">
+  <div class="panel" id="resultPanel" style="display:none">
+    <h2>推荐结果</h2>
+    <div id="resultBody"></div>
+  </div>
+  <div class="panel" id="itineraryPanel" style="display:none;margin-top:12px">
+    <h2>多人多地点路线方案</h2>
+    <div class="muted">地图：不同颜色虚线为每位参与者赴约路线，紫色实线为集合后共同路线；标注“估算”的路段为直线降级。</div>
+    <div id="itineraryBody"></div>
+  </div>
+</div>
+
+<script>
+// ===== 全局状态 =====
+const state = {
+  // 每次打开/刷新页面都重新登录，避免恢复旧用户、旧 trip 和旧选点造成误解。
+  token: '',
+  user: null,
+  tripId: null,
+  candidates: [],
+  destinations: [],
+  itinerary: null,
+  votes: {},          // candidate_id -> {up, down, my_vote}
+  voting: new Set(),  // 正在提交的 candidate_id
+  participants: [],
+  picked: null,       // 地图点选 {lat,lng}
+  fbBounds: null,     // fallback 散点图当前坐标范围
+  map: null,          // AMap 实例
+  ws: null,           // WebSocket 连接
+};
+
+// 同一浏览器的多个标签页应保持一个当前账号；多账号联调请使用无痕窗口或不同浏览器。
+const pageInstanceId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+const authChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('route-plan-auth') : null;
+if (authChannel) {
+  authChannel.onmessage = event => {
+    const message = event.data || {};
+    if (message.source === pageInstanceId || !['login', 'logout'].includes(message.type)) return;
+    const previousName = state.user?.name;
+    clearSession(false);
+    const action = message.type === 'login' ? `其他页面已登录账号“${message.userName || '新账号'}”` : '其他页面已退出登录';
+    toast(`${action}${previousName ? `，当前页面的“${previousName}”会话已清除` : ''}，请刷新或重新登录`, true);
+  };
+}
+
+// 清理旧版本遗留的自动登录数据；高德地图 Key 配置仍保留。
+localStorage.removeItem('token');
+localStorage.removeItem('user');
+localStorage.removeItem('tripId');
+
+// ===== 通用 API =====
+async function api(path, method = 'GET', body = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.token) headers['X-Token'] = state.token;
+  const resp = await fetch(path, {
+    method, headers,
+    body: body === null ? null : JSON.stringify(body),
+  });
+  const text = await resp.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!resp.ok) {
+    console.error(`[api] ${method} ${path} → ${resp.status}: ${data.detail || text}`);
+    if (resp.status === 401) {
+      // 登录态失效：清掉本地 token，明确提示重新登录
+      clearSession();
+      throw new Error('登录已过期，请重新登录');
+    }
+    throw new Error(`${path} → ${resp.status}: ${data.detail || text}`);
+  }
+  return data;
+}
+
+// ===== 登录 =====
+async function doLogin() {
+  const phone = document.getElementById('phone').value.trim();
+  const name = document.getElementById('name').value.trim();
+  if (!phone) return toast('请输入手机号');
+  if (!/^1[3-9]\d{9}$/.test(phone)) return toast('请输入正确的中国大陆 11 位手机号', true);
+  try {
+    const previousUserId = state.user?.id;
+    const loginBody = name ? { phone, name } : { phone };
+    const r = await api('/auth/login', 'POST', loginBody);
+    if (previousUserId && previousUserId !== r.user.id) clearTripState();
+    state.token = r.token; state.user = r.user;
+    authChannel?.postMessage({ type: 'login', source: pageInstanceId, userId: r.user.id, userName: r.user.name });
+    renderUser();
+    if (state.ws) { state.ws.onclose = null; state.ws.close(); state.ws = null; }
+    if (state.tripId) { refreshParticipants(); connectWS(); }
+    toast(`已登录：${r.user.name}`);
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderUser() {
+  const el = document.getElementById('userInfo');
+  const phone = state.user?.phone;
+  const maskedPhone = phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : state.user?.id;
+  el.textContent = state.user ? `👤 ${state.user.name}（${maskedPhone}）` : '未登录';
+  document.getElementById('logoutButton').style.display = state.user ? 'inline-block' : 'none';
+}
+
+function clearTripState() {
+  if (state.ws) { state.ws.onclose = null; state.ws.close(); state.ws = null; }
+  state.tripId = null;
+  state.participants = [];
+  state.candidates = [];
+  state.destinations = [];
+  state.itinerary = null;
+  state.votes = {};
+  state.voting.clear();
+  state.picked = null;
+  localStorage.removeItem('tripId');
+  document.getElementById('tripInfo').textContent = '';
+  document.getElementById('startStatus').textContent = '';
+  updatePickedStatus();
+  renderParticipants();
+  renderDestinations();
+  renderResult();
+  renderItinerary();
+  drawAll();
+}
+
+function clearSession(notifyPeers = true) {
+  const hadUser = Boolean(state.user || state.token);
+  state.token = '';
+  state.user = null;
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  clearTripState();
+  renderUser();
+  if (notifyPeers && hadUser) authChannel?.postMessage({ type: 'logout', source: pageInstanceId });
+}
+
+// ===== trip =====
+async function doCreateTrip() {
+  const title = document.getElementById('tripTitle').value.trim() || '周末出行';
+  try {
+    const r = await api('/trips', 'POST', { title, default_mode: 'transit' });
+    state.tripId = r.trip_id;
+    document.getElementById('tripInfo').textContent =
+      `trip #${r.trip_id} 已创建，邀请码 ${r.invite_code}`;
+    toast('trip 创建成功');
+    refreshParticipants();
+    refreshDestinations();
+    connectWS();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function doJoinTrip() {
+  const code = document.getElementById('inviteCode').value.trim();
+  if (!code) return toast('请输入邀请码');
+  try {
+    const r = await api('/trips/join-by-code', 'POST', { invite_code: code });
+    state.tripId = r.trip_id;
+    toast(`已加入 trip #${r.trip_id}`);
+    refreshParticipants();
+    refreshDestinations();
+    connectWS();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ===== 出发点 =====
+function submitStart() {
+  const lat = parseFloat(document.getElementById('lat').value);
+  const lng = parseFloat(document.getElementById('lng').value);
+  console.log('[submitStart] lat=', lat, 'lng=', lng, 'tripId=', state.tripId);
+  if (isNaN(lat) || isNaN(lng)) return toast('请先在地图上点选或填写经纬度');
+  const mode = document.querySelector('input[name=mode]:checked').value;
+  putStart(lat, lng, mode);
+}
+
+async function putStart(lat, lng, mode) {
+  if (!state.tripId) return toast('请先创建或加入 trip');
+  const statusEl = document.getElementById('startStatus');
+  try {
+    const r = await api(`/trips/${state.tripId}/participants/me`, 'PUT', {
+      start_location: { lat, lng, address: '' },
+      transport_mode: mode,
+    });
+    console.log('[putStart] 成功:', r);
+    statusEl.textContent = `✅ 已提交（${mode === 'driving' ? '自驾' : '公交'}）`;
+    statusEl.style.color = '#00b578';
+    toast('出发点已提交');
+    // 提交已经成功；后续刷新/地图绘制失败不应被误报为“提交失败”。
+    await refreshParticipants();
+  } catch (e) {
+    console.error('[putStart] 失败:', e);
+    statusEl.textContent = `❌ 提交失败：${e.message}`;
+    statusEl.style.color = '#d4380d';
+    toast(e.message, true);
+  }
+}
+
+// ===== WebSocket 实时同步 =====
+function connectWS() {
+  if (!state.tripId) return;
+  const tripId = String(state.tripId);
+  if (state.ws && state.ws._tripId === tripId && state.ws.readyState <= 1) return;
+  if (state.ws) {
+    const old = state.ws;
+    state.ws = null;
+    old.onclose = null;
+    old.close();
+  }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(
+    `${proto}://${location.host}/trips/${tripId}/ws?token=${encodeURIComponent(state.token)}`
+  );
+  ws._tripId = tripId;
+  state.ws = ws;
+
+  ws.onmessage = ev => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    console.log('[ws] 收到事件:', msg.type);
+    if (msg.type === 'participants_updated') refreshParticipants();
+    else if (msg.type === 'meeting_points_ready') fetchMeetingPoints();
+    else if (msg.type === 'votes_updated') refreshVotes();
+    else if (msg.type === 'destinations_updated') {
+      if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
+      refreshDestinations();
+    } else if (msg.type === 'destination_votes_updated') refreshDestinations();
+    else if (msg.type === 'planning_settings_updated') {
+      if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
+    } else if (msg.type === 'itinerary_ready' || msg.type === 'itinerary_confirmed') fetchLatestItinerary();
+  };
+  ws.onclose = () => {
+    if (state.ws === ws) state.ws = null;
+    // 简单重连（延迟 2 秒）
+    setTimeout(() => {
+      if (String(state.tripId) === tripId && state.token) connectWS();
+    }, 2000);
+  };
+  ws.onerror = () => { /* onclose 会负责重连 */ };
+}
+
+async function fetchMeetingPoints() {
+  try {
+    const r = await api(`/trips/${state.tripId}/meeting-points`);
+    state.candidates = r.candidates;
+    renderResult();
+    drawAll();
+    await refreshVotes();
+    document.getElementById('recommendLog').textContent = `已同步 ${r.candidates.length} 个候选点`;
+  } catch (e) { /* 尚无结果时 404，忽略 */ }
+}
+
+async function refreshVotes() {
+  if (!state.tripId) return;
+  try {
+    const r = await api(`/trips/${state.tripId}/votes`);
+    state.votes = Object.fromEntries(r.results.map(v => [v.candidate_id, v]));
+    renderResult();
+  } catch (e) {
+    console.error('[refreshVotes] 失败:', e);
+  }
+}
+
+// ===== 多人想去地点（Phase 2A） =====
+async function refreshDestinations() {
+  if (!state.tripId) return;
+  try {
+    const r = await api(`/trips/${state.tripId}/destinations`);
+    state.destinations = r.destinations;
+    renderDestinations();
+    drawAll();
+  } catch (e) { console.error('[refreshDestinations] 失败:', e); }
+}
+
+async function addDestination() {
+  if (!state.tripId) return toast('请先创建或加入 trip', true);
+  if (!state.picked) return toast('请先在地图上点击想去地点的位置', true);
+  const name = document.getElementById('destinationName').value.trim();
+  const address = document.getElementById('destinationAddress').value.trim();
+  const stay = Number(document.getElementById('destinationStay').value);
+  if (!name) return toast('请输入地点名称', true);
+  if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('停留时间应为 5～720 分钟', true);
+  try {
+    await api(`/trips/${state.tripId}/destinations`, 'POST', {
+      name, address: address || null, lat: state.picked.lat, lng: state.picked.lng,
+      expected_stay_min: stay,
+    });
+    document.getElementById('destinationName').value = '';
+    document.getElementById('destinationAddress').value = '';
+    toast('想去地点已添加');
+    await refreshDestinations();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function voteDestination(id, value) {
+  const destination = state.destinations.find(item => item.id === id);
+  if (!destination) return;
+  const current = destination.votes?.my_vote || 0;
+  try {
+    await api(`/trips/${state.tripId}/votes`, 'POST', {
+      candidate_type: 'destination', candidate_id: String(id),
+      vote_value: current === value ? 0 : value,
+    });
+    await refreshDestinations();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function setDestinationStatus(id, visitStatus) {
+  try {
+    await api(`/trips/${state.tripId}/destinations/${id}/status`, 'PUT', { visit_status: visitStatus });
+    await refreshDestinations();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteDestination(id) {
+  if (!confirm('确认删除这个候选地点？')) return;
+  try {
+    await api(`/trips/${state.tripId}/destinations/${id}`, 'DELETE');
+    await refreshDestinations();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function editDestinationStay(id, currentValue) {
+  const raw = prompt('请输入预计停留时间（5～720分钟）', String(currentValue));
+  if (raw === null) return;
+  const stay = Number(raw);
+  if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('停留时间应为 5～720 分钟', true);
+  try {
+    await api(`/trips/${state.tripId}/destinations/${id}`, 'PUT', { expected_stay_min: stay });
+    toast('预计停留时间已更新，旧路线需要重新生成');
+    await refreshDestinations();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderDestinations() {
+  const el = document.getElementById('destinationList');
+  if (!el) return;
+  if (!state.destinations.length) { el.innerHTML = '<div class="log">还没有想去地点</div>'; return; }
+  const me = state.participants.find(p => p.user_id === state.user?.id);
+  const isCreator = me?.role === 'creator';
+  const labels = { candidate: '候选', must_visit: '必去', optional: '可选', excluded: '本次不去' };
+  el.innerHTML = state.destinations.map(d => {
+    const vote = d.votes || { up: 0, down: 0, my_vote: 0 };
+    const canDelete = d.visit_status === 'candidate' && (isCreator || d.submitted_by.user_id === state.user?.id);
+    const canEdit = isCreator || d.submitted_by.user_id === state.user?.id;
+    const statusControl = isCreator ? `<select onchange="setDestinationStatus(${Number(d.id)}, this.value)">
+      ${Object.entries(labels).map(([value, label]) => `<option value="${value}" ${d.visit_status === value ? 'selected' : ''}>${label}</option>`).join('')}
+    </select>` : `<span class="tag">${labels[d.visit_status] || escapeHtml(d.visit_status)}</span>`;
+    return `<div class="destination-card">
+      <div class="destination-title"><span>📌 ${escapeHtml(d.name)}</span>${statusControl}</div>
+      <div class="muted">${escapeHtml(d.address || '地图选点')} · 停留 ${Number(d.expected_stay_min)} 分钟 · ${escapeHtml(d.submitted_by.name)} 添加</div>
+      <div class="destination-actions">
+        <button class="vote-btn ${vote.my_vote === 1 ? 'active-up' : ''}" onclick="voteDestination(${Number(d.id)}, 1)">👍 ${vote.up}</button>
+        <button class="vote-btn ${vote.my_vote === -1 ? 'active-down' : ''}" onclick="voteDestination(${Number(d.id)}, -1)">👎 ${vote.down}</button>
+        ${canEdit ? `<button class="vote-btn" onclick="editDestinationStay(${Number(d.id)}, ${Number(d.expected_stay_min)})">修改停留时间</button>` : ''}
+        ${canDelete ? `<button class="vote-btn" onclick="deleteDestination(${Number(d.id)})">删除</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ===== Phase 2B 路线规划 =====
+async function savePlanningSettings() {
+  if (!state.tripId) return toast('请先创建或加入 trip', true);
+  const start = document.getElementById('planStart').value;
+  const end = document.getElementById('planEnd').value;
+  if (!start || !end) return toast('请选择开始和结束时间', true);
+  if (new Date(end) <= new Date(start)) return toast('结束时间必须晚于开始时间', true);
+  try {
+    await api(`/trips/${state.tripId}/planning-settings`, 'PUT', {
+      planned_start_at: new Date(start).toISOString(), planned_end_at: new Date(end).toISOString(),
+      group_transport_mode: document.getElementById('groupMode').value,
+      optimization_objective: document.getElementById('planObjective').value,
+    });
+    document.getElementById('planLog').textContent = '规划参数已保存';
+    return true;
+  } catch (e) { toast(e.message, true); return false; }
+}
+
+async function generateItinerary() {
+  const log = document.getElementById('planLog');
+  try {
+    if (!await savePlanningSettings()) return;
+    log.textContent = '正在计算第一站和全部地点顺序…';
+    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans`, 'POST', {});
+    renderItinerary();
+    drawAll();
+    log.textContent = '路线规划完成';
+  } catch (e) { log.textContent = ''; toast(e.message, true); }
+}
+
+async function fetchLatestItinerary() {
+  if (!state.tripId) return;
+  try {
+    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/latest`);
+    renderItinerary();
+    drawAll();
+  } catch (e) { /* 尚无方案时忽略 */ }
+}
+
+function formatTime(value) {
+  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+}
+
+function renderRouteSteps(steps) {
+  if (!Array.isArray(steps) || !steps.length) return '';
+  const items = steps.map(step => {
+    if (step.type === 'transit' || step.type === 'railway') {
+      const stops = step.departure_stop || step.arrival_stop
+        ? `${escapeHtml(step.departure_stop || '起点站')} → ${escapeHtml(step.arrival_stop || '终点站')}` : '';
+      const extra = [step.via_num != null ? `途经 ${Number(step.via_num)} 站` : '', step.duration_min != null ? `约 ${Number(step.duration_min)} 分钟` : ''].filter(Boolean).join('，');
+      return `<li><b>${escapeHtml(step.line || '公交/地铁')}</b> ${stops}${extra ? `（${extra}）` : ''}</li>`;
+    }
+    const distance = step.distance_m != null ? `（${Number(step.distance_m)}米）` : '';
+    return `<li>${escapeHtml(step.instruction || (step.type === 'driving' ? '继续行驶' : '步行'))}${distance}</li>`;
+  }).join('');
+  return `<details style="margin-top:6px"><summary>查看具体路线步骤</summary><ol>${items}</ol></details>`;
+}
+
+function renderItinerary() {
+  const panel = document.getElementById('itineraryPanel');
+  const body = document.getElementById('itineraryBody');
+  const plan = state.itinerary;
+  if (!plan) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  const arrivals = plan.participant_arrivals.map(p => {
+    const mode = escapeHtml(p.mode === 'driving' ? '自驾' : '公交');
+    const summary = p.estimated
+      ? `${mode}真实路线不可用；内部直线估算为 ${p.travel_time_min} 分钟、约 ${formatTime(p.arrival_at)} 到达（仅辅助排序，不可作为出行时间）<div class="err">${escapeHtml(p.fallback_reason || '高德未返回可用路线')}</div>`
+      : `${mode}约 ${p.travel_time_min} 分钟，${formatTime(p.arrival_at)} 到达`;
+    return `<li>${escapeHtml(p.name)}：${summary}${renderRouteSteps(p.steps)}</li>`;
+  }).join('');
+  const stops = plan.ordered_stops.map((s, i) => {
+    const leg = i ? plan.route_legs[i - 1] : null;
+    return `<div class="destination-card"><div class="destination-title">${s.order_index}. ${escapeHtml(s.name)}</div>
+      ${leg ? (leg.estimated
+        ? `<div class="err">上一段真实路线不可用；${leg.travel_time_min} 分钟 / ${leg.distance_km} km 仅为直线估算，不可作为导航。${escapeHtml(leg.fallback_reason || '')}</div>`
+        : `<div class="muted">上一站出发后约 ${leg.travel_time_min} 分钟 / ${leg.distance_km} km</div>${renderRouteSteps(leg.steps)}`)
+        : '<div class="muted">第一站（全员集合）</div>'}
+      <div>${formatTime(s.arrival_at)} 到达 → ${formatTime(s.leave_at)} 离开</div></div>`;
+  }).join('');
+  const warnings = (plan.warnings || []).map(w => `<div class="err">⚠ ${escapeHtml(w.message)}</div>`).join('');
+  const me = state.participants.find(p => p.user_id === state.user?.id);
+  const confirmButton = me?.role === 'creator' && !plan.is_stale && plan.status !== 'confirmed'
+    ? `<button style="margin-top:10px" onclick="confirmItinerary(${Number(plan.plan_id)})">确认最终方案</button>` : '';
+  body.innerHTML = `<div><b>个人前往第一站</b><ul>${arrivals}</ul></div>
+    <div class="tag">交通总耗时 ${plan.total_travel_min} 分钟</div>
+    <div class="tag green">完整行程 ${plan.total_duration_min} 分钟</div>
+    ${plan.status === 'confirmed' ? '<div class="tag green">已确认最终方案</div>' : ''}
+    ${plan.is_stale ? '<div class="err">地点或参数已变化，本方案已过期</div>' : ''}
+    ${warnings}<h3>共同访问顺序</h3>${stops}${confirmButton}`;
+}
+
+async function confirmItinerary(planId) {
+  try {
+    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/${planId}/confirm`, 'POST', {});
+    renderItinerary();
+    toast('最终方案已确认');
+  } catch (e) { toast(e.message, true); }
+}
+
+function candidateId(candidate) {
+  if (candidate.candidate_id) return candidate.candidate_id;
+  return `coord:${Number(candidate.poi.lat).toFixed(6)},${Number(candidate.poi.lng).toFixed(6)}`;
+}
+
+async function castVote(id, value) {
+  if (!state.tripId || state.voting.has(id)) return;
+  const current = state.votes[id]?.my_vote || 0;
+  const nextValue = current === value ? 0 : value;
+  state.voting.add(id);
+  renderResult();
+  try {
+    await api(`/trips/${state.tripId}/votes`, 'POST', {
+      candidate_type: 'meeting_point', candidate_id: id, vote_value: nextValue,
+    });
+    await refreshVotes();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    state.voting.delete(id);
+    renderResult();
+  }
+}
+
+// ===== 参与者 =====
+async function refreshParticipants() {
+  if (!state.tripId) return;
+  try {
+    const r = await api(`/trips/${state.tripId}/participants`);
+    state.participants = r.participants;
+    renderParticipants();
+    drawAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderParticipants() {
+  const el = document.getElementById('participantList');
+  if (!state.participants.length) { el.textContent = '暂无参与者'; return; }
+  el.innerHTML = state.participants.map(p => {
+    const loc = p.start_location ? '已填' : '未填';
+    const mode = p.transport_mode === 'driving' ? '自驾' : '公交';
+    return `<div>${escapeHtml(p.name)} <span class="tag ${p.role === 'creator' ? 'orange' : 'green'}">${escapeHtml(p.role)}</span>
+      <span class="muted">${mode} · ${loc}</span></div>`;
+  }).join('');
+}
+
+// ===== 推荐 =====
+async function doRecommend() {
+  if (!state.tripId) return toast('请先创建或加入 trip');
+  const objective = document.getElementById('objective').value;
+  const log = document.getElementById('recommendLog');
+  log.textContent = '计算中…';
+  try {
+    const r = await api(`/trips/${state.tripId}/meeting-points`, 'POST', { objective });
+    state.candidates = r.candidates;
+    log.textContent = `已生成 ${r.candidates.length} 个候选点`;
+    renderResult();
+    drawAll();
+    await refreshVotes();
+  } catch (e) { log.textContent = ''; toast(e.message, true); }
+}
+
+function renderResult() {
+  const panel = document.getElementById('resultPanel');
+  const body = document.getElementById('resultBody');
+  if (!state.candidates.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  body.innerHTML = state.candidates.map(c => {
+    const id = candidateId(c);
+    const vote = state.votes[id] || { up: 0, down: 0, my_vote: 0 };
+    const disabled = state.voting.has(id) ? 'disabled' : '';
+    const rows = c.per_person.map(pp => {
+      const mode = pp.mode === 'driving' ? '🚗 自驾' : '🚌 公交';
+      let parking = '';
+      if (pp.parking) {
+        const lots = (pp.parking.lots || []).map(l => escapeHtml(l.name)).join('、') || '无';
+        parking = `<div class="muted">🅿️ ${escapeHtml(pp.parking.difficulty)}；附近：${lots}</div>`;
+      }
+      return `<tr>
+        <td>${escapeHtml(pp.name)}</td><td>${mode}</td>
+        <td>${pp.travel_time_min} 分钟</td>
+        <td>${escapeHtml(pp.route_summary)}${parking}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="cand-block">
+      <div class="cand-title">#${c.rank} ${escapeHtml(c.poi.name)}
+        <span class="tag">最长 ${c.metrics.max_travel_time_min} min</span>
+        <span class="tag green">总耗时 ${c.metrics.total_travel_time_min} min</span>
+      </div>
+      <div class="muted">${escapeHtml(c.poi.address || '（网格采样点）')}</div>
+      <div class="vote-bar">
+        <button class="vote-btn ${vote.my_vote === 1 ? 'active-up' : ''}" ${disabled}
+                data-candidate-id="${escapeHtml(id)}" onclick="castVote(this.dataset.candidateId, 1)">👍 赞 ${vote.up}</button>
+        <button class="vote-btn ${vote.my_vote === -1 ? 'active-down' : ''}" ${disabled}
+                data-candidate-id="${escapeHtml(id)}" onclick="castVote(this.dataset.candidateId, -1)">👎 踩 ${vote.down}</button>
+        <span class="muted">再次点击已选按钮可取消</span>
+      </div>
+      <table><thead><tr><th>成员</th><th>方式</th><th>耗时</th><th>说明</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`;
+  }).join('');
+}
+
+// ===== 地图 =====
+function saveAmapCfg() {
+  const key = document.getElementById('amapKey').value.trim();
+  const sec = document.getElementById('amapSec').value.trim();
+  localStorage.setItem('amapKey', key);
+  localStorage.setItem('amapSec', sec);
+  toast('已保存，重新加载地图…');
+  loadMap();
+}
+
+async function loadMap() {
+  let key = localStorage.getItem('amapKey') || '';
+  let sec = localStorage.getItem('amapSec') || '';
+  // 优先用后端 /api/config 注入的配置（来自 .env），localStorage 手动填写作为兜底
+  try {
+    const cfg = await fetch('/api/config').then(r => r.json());
+    if (cfg.amap_js_key) key = cfg.amap_js_key;
+    if (cfg.amap_js_security_code) sec = cfg.amap_js_security_code;
+  } catch (e) { /* 后端未返回配置时回退 localStorage */ }
+  const tip = document.getElementById('mapTip');
+  const mapEl = document.getElementById('map');
+  const canvas = document.getElementById('fallback');
+
+  if (!key) {
+    mapEl.style.display = 'none';
+    canvas.style.display = 'block';
+    tip.style.display = 'block';
+    tip.textContent = '未配置高德 JS Key，当前用降级散点图。点击图上任意位置即可选出发点（红点标记），再点左侧「提交」。';
+    if (!canvas._bound) {
+      canvas._bound = true;
+      canvas.onclick = e => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        if (!state.fbBounds) return;
+        const prj = fbProject(state.fbBounds, canvas);
+        // 跳过边缘留白区（pad 内不做反算）
+        if (x < 40 || y < 40 || x > canvas.width - 40 || y > canvas.height - 40) return;
+        state.picked = { lat: prj.unprojectY(y), lng: prj.unprojectX(x) };
+        document.getElementById('lat').value = state.picked.lat.toFixed(5);
+        document.getElementById('lng').value = state.picked.lng.toFixed(5);
+        updatePickedStatus();
+        drawFallback();
+      };
+    }
+    drawFallback();
+    return;
+  }
+
+  if (window.AMap) { initMap(); return; }
+  window._AMapSecurityConfig = { securityJsCode: sec };
+  const script = document.createElement('script');
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}`;
+  script.onload = () => { tip.style.display = 'none'; canvas.style.display = 'none'; mapEl.style.display = 'block'; initMap(); };
+  script.onerror = () => { tip.style.display = 'block'; tip.textContent = '高德地图加载失败（Key 无效或网络问题），改用降级散点图。'; drawFallback(); };
+  document.head.appendChild(script);
+}
+
+function initMap() {
+  if (state.map) return;
+  state.map = new AMap.Map('map', { zoom: 12, center: [116.40, 39.90] });
+  state.map.on('click', e => {
+    const lng = e.lnglat.getLng(), lat = e.lnglat.getLat();
+    state.picked = { lat, lng };
+    document.getElementById('lat').value = lat.toFixed(5);
+    document.getElementById('lng').value = lng.toFixed(5);
+    updatePickedStatus();
+    // 只更新红色选点标记，不自动调整视野，避免地图跳回中心。
+    drawAll(false);
+  });
+  drawAll();
+}
+
+function drawAll(fitView = true) {
+  if (state.map) drawAmap(fitView);
+  else drawFallback();
+}
+
+function drawAmap(fitView = true) {
+  const map = state.map;
+  map.clearMap();
+  const points = [];
+  // 参与者出发点（绿色）
+  state.participants.forEach(p => {
+    if (!p.start_location) return;
+    const { lat, lng } = p.start_location;
+    points.push({ lng: Number(lng), lat: Number(lat) });
+    new AMap.Marker({
+      position: [lng, lat],
+      title: `${p.name}（出发）`,
+      content: `<div style="background:#00b578;color:#fff;border-radius:12px;padding:2px 8px;font-size:12px">${escapeHtml(p.name)}</div>`,
+    }).setMap(map);
+  });
+  // 候选点（蓝色，带排名）
+  state.candidates.forEach(c => {
+    points.push({ lng: Number(c.poi.lng), lat: Number(c.poi.lat) });
+    new AMap.Marker({
+      position: [c.poi.lng, c.poi.lat],
+      title: `#${c.rank} ${c.poi.name}`,
+      label: { content: `<div style="background:#3370ff;color:#fff;border-radius:50%;width:20px;height:20px;line-height:20px;text-align:center;font-size:12px">${Number(c.rank)}</div>`, direction: 'top' },
+    }).setMap(map);
+  });
+  // 想去地点（紫色）
+  state.destinations.forEach(d => {
+    points.push({ lng: Number(d.lng), lat: Number(d.lat) });
+    new AMap.Marker({
+      position: [d.lng, d.lat], title: `想去：${d.name}`,
+      content: `<div style="background:#722ed1;color:#fff;border-radius:12px;padding:2px 8px;font-size:12px">${escapeHtml(d.name)}</div>`,
+    }).setMap(map);
+  });
+  // 当前地图选点（红色），用于同时确认个人起点或想去地点坐标。
+  if (state.picked) {
+    points.push({ lng: Number(state.picked.lng), lat: Number(state.picked.lat) });
+    new AMap.Marker({
+      position: [state.picked.lng, state.picked.lat],
+      title: '当前选点',
+      content: '<div style="background:#ff4d4f;color:#fff;border-radius:12px;padding:2px 8px;font-size:12px">当前选点</div>',
+      zIndex: 200,
+    }).setMap(map);
+  }
+  // 规划快照自带所有参与者及高德道路轨迹，避免不同客户端本地状态造成显示差异。
+  if (state.itinerary?.ordered_stops?.length) {
+    const stops = state.itinerary.ordered_stops;
+    const first = stops[0];
+    const colors = ['#1677ff', '#00a870', '#fa8c16', '#eb2f96', '#13c2c2'];
+    state.itinerary.participant_arrivals.forEach((p, index) => {
+      const fallbackPath = p.origin ? [[p.origin.lng, p.origin.lat], [first.lng, first.lat]] : [];
+      const path = p.polyline?.length ? p.polyline : fallbackPath;
+      if (!path.length) return;
+      new AMap.Polyline({
+        path, strokeColor: colors[index % colors.length], strokeWeight: 4,
+        strokeStyle: 'dashed', showDir: true,
+      }).setMap(map);
+    });
+    state.itinerary.route_legs.forEach(leg => {
+      const from = stops.find(s => s.destination_id === leg.from_destination_id);
+      const to = stops.find(s => s.destination_id === leg.to_destination_id);
+      const path = leg.polyline?.length ? leg.polyline : (from && to ? [[from.lng, from.lat], [to.lng, to.lat]] : []);
+      if (!path.length) return;
+      new AMap.Polyline({
+        path, strokeColor: '#722ed1', strokeWeight: 6, strokeOpacity: 0.85, showDir: true,
+      }).setMap(map);
+    });
+  }
+  if (fitView && points.length) {
+    try {
+      // 不传 LngLat 数组：高德 JS API 2.0 的 setFitView 参数是覆盖物集合，
+      // 传坐标会在内部调用 getBounds() 时抛错。无参数表示适配地图上全部 Marker。
+      map.setFitView();
+    } catch (e) {
+      // 极端 SDK 兼容情况下仍保证地图可用，不影响已成功的业务提交。
+      console.warn('[drawAmap] setFitView 失败，回退到中心点:', e);
+      const center = points.reduce(
+        (acc, p) => ({ lng: acc.lng + p.lng / points.length, lat: acc.lat + p.lat / points.length }),
+        { lng: 0, lat: 0 }
+      );
+      map.setZoomAndCenter(12, [center.lng, center.lat]);
+    }
+  }
+}
+
+function fbBounds() {
+  // 计算散点图坐标范围：参与者 + 候选点 + 我的选点；无数据时用默认北京范围（方便首点选点）
+  const pts = [];
+  state.participants.forEach(p => {
+    if (p.start_location) pts.push({ lat: p.start_location.lat, lng: p.start_location.lng });
+  });
+  state.candidates.forEach(c => pts.push({ lat: c.poi.lat, lng: c.poi.lng }));
+  state.destinations.forEach(d => pts.push({ lat: d.lat, lng: d.lng }));
+  if (state.picked) pts.push(state.picked);
+  if (!pts.length) return { minLat: 39.70, maxLat: 40.15, minLng: 116.15, maxLng: 116.65 };
+
+  const lats = pts.map(p => p.lat), lngs = pts.map(p => p.lng);
+  let minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  let minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  // 范围过小时适当外扩，避免点击反算误差过大
+  if (maxLat - minLat < 0.02) { const c = (maxLat + minLat) / 2; minLat = c - 0.01; maxLat = c + 0.01; }
+  if (maxLng - minLng < 0.02) { const c = (maxLng + minLng) / 2; minLng = c - 0.01; maxLng = c + 0.01; }
+  return { minLat, maxLat, minLng, maxLng };
+}
+
+function fbProject(bounds, canvas) {
+  const pad = 40;
+  const w = canvas.width - pad * 2, h = canvas.height - pad * 2;
+  return {
+    sx: lng => pad + (lng - bounds.minLng) / (bounds.maxLng - bounds.minLng) * w,
+    sy: lat => canvas.height - pad - (lat - bounds.minLat) / (bounds.maxLat - bounds.minLat) * h,
+    unprojectX: x => bounds.minLng + (x - pad) / w * (bounds.maxLng - bounds.minLng),
+    unprojectY: y => bounds.maxLat - (canvas.height - pad - y) / h * (bounds.maxLat - bounds.minLat),
+  };
+}
+
+function drawFallback() {
+  const canvas = document.getElementById('fallback');
+  if (!canvas || canvas.style.display === 'none') return;
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#eef1f5';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const bounds = fbBounds();
+  state.fbBounds = bounds;
+  const prj = fbProject(bounds, canvas);
+
+  if (state.itinerary?.ordered_stops?.length) {
+    const stops = state.itinerary.ordered_stops;
+    const first = stops[0];
+    const colors = ['#1677ff', '#00a870', '#fa8c16', '#eb2f96', '#13c2c2'];
+    ctx.save();
+    ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
+    state.itinerary.participant_arrivals.forEach((p, index) => {
+      const path = p.polyline?.length ? p.polyline : (p.origin ? [[p.origin.lng, p.origin.lat], [first.lng, first.lat]] : []);
+      if (!path.length) return;
+      ctx.strokeStyle = colors[index % colors.length]; ctx.beginPath();
+      path.forEach((point, i) => i ? ctx.lineTo(prj.sx(point[0]), prj.sy(point[1])) : ctx.moveTo(prj.sx(point[0]), prj.sy(point[1])));
+      ctx.stroke();
+    });
+    ctx.setLineDash([]); ctx.strokeStyle = '#722ed1'; ctx.lineWidth = 5;
+    state.itinerary.route_legs.forEach(leg => {
+      const from = stops.find(s => s.destination_id === leg.from_destination_id);
+      const to = stops.find(s => s.destination_id === leg.to_destination_id);
+      const path = leg.polyline?.length ? leg.polyline : (from && to ? [[from.lng, from.lat], [to.lng, to.lat]] : []);
+      if (!path.length) return;
+      ctx.beginPath();
+      path.forEach((point, i) => i ? ctx.lineTo(prj.sx(point[0]), prj.sy(point[1])) : ctx.moveTo(prj.sx(point[0]), prj.sy(point[1])));
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  // 参与者出发点（绿）
+  state.participants.forEach(p => {
+    if (!p.start_location) return;
+    const { lat, lng } = p.start_location;
+    ctx.fillStyle = '#00b578';
+    ctx.beginPath(); ctx.arc(prj.sx(lng), prj.sy(lat), 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1f2329'; ctx.font = '12px sans-serif';
+    ctx.fillText(`${p.name}（出发）`, prj.sx(lng) + 10, prj.sy(lat) + 4);
+  });
+  // 候选点（蓝）
+  state.candidates.forEach(c => {
+    ctx.fillStyle = '#3370ff';
+    ctx.beginPath(); ctx.arc(prj.sx(c.poi.lng), prj.sy(c.poi.lat), 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1f2329'; ctx.font = '12px sans-serif';
+    ctx.fillText(`#${c.rank} ${c.poi.name}`, prj.sx(c.poi.lng) + 10, prj.sy(c.poi.lat) + 4);
+  });
+  // 想去地点（紫）
+  state.destinations.forEach(d => {
+    ctx.fillStyle = '#722ed1';
+    ctx.beginPath(); ctx.arc(prj.sx(d.lng), prj.sy(d.lat), 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1f2329'; ctx.font = '12px sans-serif';
+    ctx.fillText(`想去：${d.name}`, prj.sx(d.lng) + 10, prj.sy(d.lat) + 4);
+  });
+  // 我的选点（红）
+  if (state.picked) {
+    ctx.fillStyle = '#ff4d4f';
+    ctx.beginPath(); ctx.arc(prj.sx(state.picked.lng), prj.sy(state.picked.lat), 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1f2329'; ctx.font = '12px sans-serif';
+    ctx.fillText('我的选点', prj.sx(state.picked.lng) + 10, prj.sy(state.picked.lat) + 4);
+  }
+}
+
+// ===== 工具 =====
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[ch]);
+}
+
+function updatePickedStatus() {
+  const el = document.getElementById('pickedStatus');
+  if (!el) return;
+  el.textContent = state.picked
+    ? `当前选点：纬度 ${state.picked.lat.toFixed(6)}，经度 ${state.picked.lng.toFixed(6)}（地图红色标记）`
+    : '尚未选择地图位置';
+  el.style.color = state.picked ? '#d4380d' : '#8a919c';
+}
+
+function toast(msg, isErr = false) {
+  const el = document.getElementById('mapTip');
+  el.style.display = 'block';
+  el.style.background = isErr ? '#fff0f0' : '#fff9e6';
+  el.style.color = isErr ? '#d4380d' : '#8a6d00';
+  el.textContent = msg;
+  setTimeout(() => { if (el.textContent === msg) el.style.display = 'none'; }, 4000);
+}
+
+// ===== 启动 =====
+renderUser();
+updatePickedStatus();
+document.getElementById('amapKey').value = localStorage.getItem('amapKey') || '';
+document.getElementById('amapSec').value = localStorage.getItem('amapSec') || '';
+loadMap();
+</script>
+</body>
+</html>
