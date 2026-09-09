@@ -11,12 +11,14 @@ from fastapi.staticfiles import StaticFiles
 from . import models  # noqa: F401  确保模型注册到 Base.metadata
 from .config import settings
 from .db import engine
+from .services.amap import amap
 from .routers import auth, destinations, itineraries, meeting_points, participants, shared_text, trips, votes, ws
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
+    await amap.aclose()
     await engine.dispose()
 
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.schemas import DestinationCreate, Location, LoginRequest, VoteRequest
+from app.schemas import DestinationCreate, Location, LoginRequest, ParticipantUpdate, VoteRequest
 from app.models import TripVote
 from app.routers.votes import aggregate_votes
 from app.services import itinerary, meeting_point
@@ -59,6 +59,25 @@ class MeetingPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ItineraryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_personal_availability_delays_departure_and_reports_early_end(self):
+        start = datetime(2026, 9, 9, 1, 0, tzinfo=timezone.utc)
+        participants = [{
+            "user_id": 1, "name": "晚到用户", "mode": "transit", "lat": 39.90, "lng": 116.40,
+            "available_from": start + timedelta(minutes=30),
+            "available_until": start + timedelta(minutes=35),
+        }]
+        destinations = [
+            {"id": 1, "name": "A", "lat": 39.91, "lng": 116.41, "expected_stay_min": 20, "visit_status": "must_visit", "opening_hours": None},
+            {"id": 2, "name": "B", "lat": 39.92, "lng": 116.42, "expected_stay_min": 20, "visit_status": "must_visit", "opening_hours": None},
+        ]
+        detail = {"duration_min": 10.0, "distance_km": 2.0, "polyline": [[116.4, 39.9], [116.41, 39.91]], "steps": []}
+        with patch.object(itinerary.amap, "route_detail", AsyncMock(return_value=detail)):
+            result = await plan_itinerary(participants, destinations, start, start + timedelta(hours=3), "transit", "total_time")
+        arrival = result["participant_arrivals"][0]
+        self.assertEqual(arrival["depart_at"], (start + timedelta(minutes=30)).isoformat())
+        self.assertEqual(arrival["arrival_at"], (start + timedelta(minutes=40)).isoformat())
+        self.assertTrue(any(w["code"] == "participant_cannot_reach_first_stop" for w in result["warnings"]))
+
     async def test_single_participant_can_plan_multiple_destinations(self):
         participants = [
             {"user_id": 1, "name": "独行用户", "mode": "driving", "lat": 39.90, "lng": 116.40},
@@ -195,6 +214,18 @@ class SchemaTests(unittest.TestCase):
     def test_location_range_is_checked(self):
         with self.assertRaises(ValidationError):
             Location(lat=100, lng=116.4)
+
+    def test_participant_availability_window_is_validated(self):
+        start = datetime(2026, 9, 9, 1, 0, tzinfo=timezone.utc)
+        ParticipantUpdate(
+            start_location=Location(lat=39.9, lng=116.4), transport_mode="transit",
+            available_from=start, available_until=start + timedelta(hours=2),
+        )
+        with self.assertRaises(ValidationError):
+            ParticipantUpdate(
+                start_location=Location(lat=39.9, lng=116.4), transport_mode="transit",
+                available_from=start, available_until=start,
+            )
 
 
 class SharedTextTests(unittest.TestCase):

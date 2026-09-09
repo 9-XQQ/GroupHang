@@ -152,6 +152,10 @@
         <input id="inviteCode" placeholder="邀请码" style="flex:1" />
         <button onclick="doJoinTrip()">加入</button>
       </div>
+      <div class="row" style="margin-top:6px">
+        <select id="myTripSelect" style="flex:1"><option value="">登录后加载我的 trip</option></select>
+        <button class="secondary" onclick="openSelectedTrip()">打开</button>
+      </div>
       <div class="log" id="tripInfo"></div>
     </div>
 
@@ -166,6 +170,8 @@
         <input id="lng" placeholder="经度" style="flex:1" />
         <button onclick="submitStart()">提交</button>
       </div>
+      <label class="muted">个人最早可出发（选填）</label><input id="availableFrom" type="datetime-local" style="width:100%" />
+      <label class="muted">个人必须结束（选填）</label><input id="availableUntil" type="datetime-local" style="width:100%" />
       <div class="log">点地图可直接取坐标（自动填入上方）</div>
       <div class="log" id="pickedStatus">尚未选择地图位置</div>
       <div class="log" id="startStatus" style="color:#8a919c"></div>
@@ -260,6 +266,7 @@ const state = {
   tripId: null,
   candidates: [],
   destinations: [],
+  myTrips: [],
   importedCandidates: [],
   itinerary: null,
   votes: {},          // candidate_id -> {up, down, my_vote}
@@ -326,6 +333,7 @@ async function doLogin() {
     state.token = r.token; state.user = r.user;
     authChannel?.postMessage({ type: 'login', source: pageInstanceId, userId: r.user.id, userName: r.user.name });
     renderUser();
+    await refreshMyTrips();
     if (state.ws) { state.ws.onclose = null; state.ws.close(); state.ws = null; }
     if (state.tripId) { refreshParticipants(); connectWS(); }
     toast(`已登录：${r.user.name}`);
@@ -367,6 +375,8 @@ function clearSession(notifyPeers = true) {
   const hadUser = Boolean(state.user || state.token);
   state.token = '';
   state.user = null;
+  state.myTrips = [];
+  document.getElementById('myTripSelect').innerHTML = '<option value="">请先登录</option>';
   localStorage.removeItem('token');
   localStorage.removeItem('user');
   clearTripState();
@@ -375,6 +385,36 @@ function clearSession(notifyPeers = true) {
 }
 
 // ===== trip =====
+async function refreshMyTrips() {
+  const select = document.getElementById('myTripSelect');
+  if (!state.token) {
+    state.myTrips = [];
+    select.innerHTML = '<option value="">请先登录</option>';
+    return;
+  }
+  try {
+    const result = await api('/trips');
+    state.myTrips = result.trips || [];
+    select.innerHTML = '<option value="">选择创建或加入过的 trip</option>' + state.myTrips.map(item =>
+      `<option value="${Number(item.trip_id)}">#${Number(item.trip_id)} ${escapeHtml(item.title)}（${item.role === 'creator' ? '我创建的' : '我加入的'} / ${escapeHtml(item.status)}）</option>`
+    ).join('');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function openSelectedTrip() {
+  const tripId = Number(document.getElementById('myTripSelect').value);
+  if (!tripId) return toast('请选择一个 trip', true);
+  try {
+    const trip = await api(`/trips/${tripId}`);
+    clearTripState();
+    state.tripId = tripId;
+    document.getElementById('tripInfo').textContent = `trip #${tripId}：${trip.title}`;
+    await Promise.all([refreshParticipants(), refreshDestinations(), fetchLatestItinerary()]);
+    connectWS();
+    toast(`已打开 trip #${tripId}`);
+  } catch (e) { toast(e.message, true); }
+}
+
 async function doCreateTrip() {
   const title = document.getElementById('tripTitle').value.trim() || '周末出行';
   try {
@@ -383,6 +423,7 @@ async function doCreateTrip() {
     document.getElementById('tripInfo').textContent =
       `trip #${r.trip_id} 已创建，邀请码 ${r.invite_code}`;
     toast('trip 创建成功');
+    refreshMyTrips();
     refreshParticipants();
     refreshDestinations();
     connectWS();
@@ -396,6 +437,7 @@ async function doJoinTrip() {
     const r = await api('/trips/join-by-code', 'POST', { invite_code: code });
     state.tripId = r.trip_id;
     toast(`已加入 trip #${r.trip_id}`);
+    refreshMyTrips();
     refreshParticipants();
     refreshDestinations();
     connectWS();
@@ -409,16 +451,23 @@ function submitStart() {
   console.log('[submitStart] lat=', lat, 'lng=', lng, 'tripId=', state.tripId);
   if (isNaN(lat) || isNaN(lng)) return toast('请先在地图上点选或填写经纬度');
   const mode = document.querySelector('input[name=mode]:checked').value;
-  putStart(lat, lng, mode);
+  const availableFrom = document.getElementById('availableFrom').value;
+  const availableUntil = document.getElementById('availableUntil').value;
+  if (availableFrom && availableUntil && new Date(availableUntil) <= new Date(availableFrom)) {
+    return toast('个人结束时间必须晚于最早可出发时间', true);
+  }
+  putStart(lat, lng, mode, availableFrom, availableUntil);
 }
 
-async function putStart(lat, lng, mode) {
+async function putStart(lat, lng, mode, availableFrom = '', availableUntil = '') {
   if (!state.tripId) return toast('请先创建或加入 trip');
   const statusEl = document.getElementById('startStatus');
   try {
     const r = await api(`/trips/${state.tripId}/participants/me`, 'PUT', {
       start_location: { lat, lng, address: '' },
       transport_mode: mode,
+      available_from: availableFrom ? new Date(availableFrom).toISOString() : null,
+      available_until: availableUntil ? new Date(availableUntil).toISOString() : null,
     });
     console.log('[putStart] 成功:', r);
     statusEl.textContent = `✅ 已提交（${mode === 'driving' ? '自驾' : '公交'}）`;
@@ -798,8 +847,10 @@ function renderParticipants() {
   el.innerHTML = state.participants.map(p => {
     const loc = p.start_location ? '已填' : '未填';
     const mode = p.transport_mode === 'driving' ? '自驾' : '公交';
+    const availability = p.available_from || p.available_until
+      ? ` · 可用 ${p.available_from ? formatTime(p.available_from) : '行程开始'} 至 ${p.available_until ? formatTime(p.available_until) : '行程结束'}` : '';
     return `<div>${escapeHtml(p.name)} <span class="tag ${p.role === 'creator' ? 'orange' : 'green'}">${escapeHtml(p.role)}</span>
-      <span class="muted">${mode} · ${loc}</span></div>`;
+      <span class="muted">${mode} · ${loc}${availability}</span></div>`;
   }).join('');
 }
 

@@ -36,6 +36,8 @@ async def update_me(
         "address": body.start_location.address,
     }
     participant.transport_mode = body.transport_mode
+    participant.available_from = body.available_from
+    participant.available_until = body.available_until
     participant.vote_status = "submitted"
     await db.commit()
 
@@ -45,6 +47,8 @@ async def update_me(
         "participant_id": participant.id,
         "start_location": participant.start_location,
         "transport_mode": participant.transport_mode,
+        "available_from": participant.available_from,
+        "available_until": participant.available_until,
     }
 
 
@@ -71,6 +75,8 @@ async def list_participants(
                 "start_location": p.start_location,
                 "transport_mode": p.transport_mode,
                 "vote_status": p.vote_status,
+                "available_from": p.available_from,
+                "available_until": p.available_until,
             }
         )
     return {"participants": participants}

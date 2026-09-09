@@ -21,6 +21,26 @@ def _gen_code(length: int = 6) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+@router.get("")
+async def list_my_trips(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """列出当前账号创建或加入过的行程，由用户决定是否恢复。"""
+    result = await db.execute(
+        select(Trip, TripParticipant)
+        .join(TripParticipant, TripParticipant.trip_id == Trip.id)
+        .where(TripParticipant.user_id == user.id)
+        .order_by(Trip.created_at.desc(), Trip.id.desc())
+    )
+    return {"trips": [{
+        "trip_id": trip.id, "title": trip.title, "status": trip.status,
+        "role": participant.role, "invite_code": trip.invite_code,
+        "planned_start_at": trip.planned_start_at, "planned_end_at": trip.planned_end_at,
+        "joined_at": participant.joined_at, "created_at": trip.created_at,
+    } for trip, participant in result.all()]}
+
+
 @router.post("", status_code=201)
 async def create_trip(
     body: TripCreate,
@@ -123,6 +143,8 @@ async def get_trip(
                 "start_location": p.start_location,
                 "transport_mode": p.transport_mode,
                 "vote_status": p.vote_status,
+                "available_from": p.available_from,
+                "available_until": p.available_until,
             }
         )
 

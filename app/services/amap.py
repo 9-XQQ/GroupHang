@@ -5,6 +5,9 @@
 
 高德坐标格式统一为 "经度,纬度"（lng,lat）。
 """
+import asyncio
+from contextvars import ContextVar
+
 import httpx
 
 from ..config import settings
@@ -19,8 +22,30 @@ class AmapClient:
         self.base_url = settings.amap_base_url.rstrip("/")
         # 有真实 key 才算可用（.env 占位符 "your_..." 视为不可用）
         self.available = bool(self.key) and not self.key.startswith("your_")
-        self.last_error: str | None = None
+        self._last_error: ContextVar[str | None] = ContextVar(f"amap_last_error_{id(self)}", default=None)
         self._city_cache: dict[tuple[float, float], str] = {}
+        self._client: httpx.AsyncClient | None = None
+        self._request_limit = asyncio.Semaphore(5)
+
+    @property
+    def last_error(self) -> str | None:
+        return self._last_error.get()
+
+    @last_error.setter
+    def last_error(self, value: str | None) -> None:
+        self._last_error.set(value)
+
+    def _http_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(12.0, connect=5.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     async def _get(self, path: str, params: dict) -> dict | None:
         self.last_error = None
@@ -28,19 +53,24 @@ class AmapClient:
             self.last_error = "后端未加载 AMAP_API_KEY"
             return None
         params = {**params, "key": self.key}
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.base_url}{path}", params=params)
+        data = None
+        for attempt in range(2):
+            try:
+                async with self._request_limit:
+                    resp = await self._http_client().get(f"{self.base_url}{path}", params=params)
                 resp.raise_for_status()
                 data = resp.json()
-        except httpx.TimeoutException:
-            self.last_error = "高德接口请求超时"
-            return None
-        except httpx.HTTPError as exc:
-            self.last_error = f"高德接口网络错误：{type(exc).__name__}"
-            return None
-        except ValueError:
-            self.last_error = "高德接口返回了无法解析的数据"
+                break
+            except httpx.TimeoutException:
+                self.last_error = f"高德接口请求超时（已尝试 {attempt + 1} 次）"
+            except httpx.HTTPError as exc:
+                self.last_error = f"高德接口网络错误：{type(exc).__name__}"
+            except ValueError:
+                self.last_error = "高德接口返回了无法解析的数据"
+                return None
+            if attempt == 0:
+                await asyncio.sleep(0.25)
+        if data is None:
             return None
         if data.get("status") != "1":
             self.last_error = f"高德接口失败：{data.get('info') or '未知错误'}（{data.get('infocode') or '无错误码'}）"

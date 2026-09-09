@@ -49,6 +49,8 @@ class TripParticipant(Base):
     start_location: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {lat,lng,address}
     transport_mode: Mapped[str] = mapped_column(String(20), default="transit")  # driving | transit
     vote_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | submitted
+    available_from: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    available_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     joined_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
 

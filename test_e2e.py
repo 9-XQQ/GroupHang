@@ -77,11 +77,17 @@ def main() -> None:
     trip = request("POST", "/trips", {"title": "周六火锅局", "default_mode": "transit"}, token_a)
     trip_id = trip["trip_id"]
     invite_code = trip["invite_code"]
+    my_trips_a = request("GET", "/trips", token=token_a)["trips"]
+    if not any(item["trip_id"] == trip_id and item["role"] == "creator" for item in my_trips_a):
+        raise RuntimeError("创建后的 trip 未出现在发起人的我的 trip 列表")
     print(f"      trip_id={trip_id}，邀请码={invite_code}\n")
 
     # 3. 小红加入
     print("[3/7] 小红用邀请码加入...")
     joined = request("POST", f"/trips/{trip_id}/join", {"invite_code": invite_code}, token_b)
+    my_trips_b = request("GET", "/trips", token=token_b)["trips"]
+    if not any(item["trip_id"] == trip_id and item["role"] == "member" for item in my_trips_b):
+        raise RuntimeError("加入后的 trip 未出现在成员的我的 trip 列表")
     print(f"      participant_id={joined['participant_id']}，role={joined['role']}\n")
 
     # Phase 2A：双方添加地点，发起人确认状态，成员投票。
@@ -126,6 +132,8 @@ def main() -> None:
         {
             "start_location": {"lat": 39.999, "lng": 116.481, "address": "望京SOHO"},
             "transport_mode": "driving",
+            "available_from": "2026-09-05T14:10:00+08:00",
+            "available_until": "2026-09-05T19:00:00+08:00",
         },
         token_a,
     )
@@ -135,10 +143,15 @@ def main() -> None:
         {
             "start_location": {"lat": 39.908, "lng": 116.446, "address": "国贸大厦"},
             "transport_mode": "transit",
+            "available_from": "2026-09-05T14:00:00+08:00",
+            "available_until": "2026-09-05T18:00:00+08:00",
         },
         token_b,
     )
     print("      已提交\n")
+    participant_snapshot = request("GET", f"/trips/{trip_id}/participants", token=token_a)["participants"]
+    if not all(item.get("available_from") and item.get("available_until") for item in participant_snapshot):
+        raise RuntimeError("参与者个人可用时间未正确保存")
 
     # Phase 2B：保存时间/优化目标并生成覆盖全部确认地点的路线。
     request(

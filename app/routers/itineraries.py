@@ -85,6 +85,7 @@ async def create_itinerary_plan(
         participants.append({
             "user_id": part.user_id, "name": person.name if person else "未知", "mode": part.transport_mode,
             "lat": float(part.start_location["lat"]), "lng": float(part.start_location["lng"]),
+            "available_from": part.available_from, "available_until": part.available_until,
         })
     if missing:
         raise HTTPException(status_code=409, detail=f"以下参与者尚未填写出发点：{missing}")

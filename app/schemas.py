@@ -31,6 +31,17 @@ class JoinRequest(BaseModel):
 class ParticipantUpdate(BaseModel):
     start_location: Location
     transport_mode: Literal["driving", "transit"]
+    available_from: datetime | None = None
+    available_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_availability(self):
+        for value in (self.available_from, self.available_until):
+            if value is not None and value.tzinfo is None:
+                raise ValueError("个人可用时间必须包含时区")
+        if self.available_from and self.available_until and self.available_until <= self.available_from:
+            raise ValueError("个人结束时间必须晚于开始时间")
+        return self
 
 
 class MeetingPointRequest(BaseModel):

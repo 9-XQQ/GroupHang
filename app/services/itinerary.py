@@ -1,4 +1,5 @@
 """Phase 2B 多起点集合 + 多地点共同路线规划。"""
+import asyncio
 from datetime import datetime, timedelta
 
 from .amap import amap, _haversine_km
@@ -61,48 +62,76 @@ async def plan_itinerary(
     objective: str,
 ) -> dict:
     """返回第一站、个人赴约、共同顺序和时间线。"""
+    route_cache: dict[tuple, asyncio.Task] = {}
+
+    async def cached_route(origin: tuple, dest: tuple, mode: str) -> dict:
+        key = (
+            round(origin[0], 6), round(origin[1], 6),
+            round(dest[0], 6), round(dest[1], 6), mode,
+        )
+        if key not in route_cache:
+            route_cache[key] = asyncio.create_task(_route(origin, dest, mode))
+        return await route_cache[key]
+
     size = len(destinations)
     distance_matrix = [[0.0] * size for _ in range(size)]
     duration_matrix = [[0.0] * size for _ in range(size)]
     estimated_matrix = [[False] * size for _ in range(size)]
     polyline_matrix = [[[] for _ in range(size)] for _ in range(size)]
     route_detail_matrix = [[{} for _ in range(size)] for _ in range(size)]
-    for i in range(size):
-        for j in range(size):
-            if i == j:
-                continue
+    async def load_matrix_item(i: int, j: int) -> None:
             a, b = _coord(destinations[i]), _coord(destinations[j])
-            route = await _route(a, b, group_mode)
+            route = await cached_route(a, b, group_mode)
             distance_matrix[i][j] = route["distance_km"]
             duration_matrix[i][j] = route["duration_min"]
             estimated_matrix[i][j] = route["estimated"]
             polyline_matrix[i][j] = route["polyline"]
             route_detail_matrix[i][j] = route
 
+    await asyncio.gather(*(
+        load_matrix_item(i, j)
+        for i in range(size) for j in range(size) if i != j
+    ))
+
     best = None
     must_first = [i for i, item in enumerate(destinations) if item["visit_status"] == "must_visit"]
-    for first in (must_first or list(range(size))):
-        arrivals = []
-        for person in participants:
-            route = await _route(_coord(person), _coord(destinations[first]), person["mode"])
-            arrivals.append(route)
+    first_candidates = must_first or list(range(size))
+
+    async def participant_arrival(person: dict, first: int) -> dict:
+        route = await cached_route(_coord(person), _coord(destinations[first]), person["mode"])
+        depart_at = max(start_at, person.get("available_from") or start_at)
+        arrival_at = depart_at + timedelta(minutes=route["duration_min"])
+        return {**route, "depart_at": depart_at, "arrival_at": arrival_at}
+
+    arrivals_by_first = {
+        first: await asyncio.gather(*(participant_arrival(person, first) for person in participants))
+        for first in first_candidates
+    }
+
+    for first in first_candidates:
+        arrivals = arrivals_by_first[first]
         route_matrix = distance_matrix if objective == "distance" else duration_matrix
         order = _two_opt(_greedy_order(first, route_matrix), route_matrix)
-        max_arrival = max(value["duration_min"] for value in arrivals)
+        arrival_offsets = [(value["arrival_at"] - start_at).total_seconds() / 60 for value in arrivals]
+        max_arrival = max(arrival_offsets)
         route_minutes = _route_cost(order, duration_matrix)
         route_km = _route_cost(order, distance_matrix)
+        availability_penalty = sum(
+            1_000_000 for person, value in zip(participants, arrivals)
+            if person.get("available_until") and value["arrival_at"] > person["available_until"]
+        )
         if objective == "distance":
-            score = route_km + max_arrival / 60.0
+            score = route_km + max_arrival / 60.0 + availability_penalty
         elif objective == "total_time":
-            score = route_minutes + max_arrival
+            score = route_minutes + max_arrival + availability_penalty
         else:
-            spread = max_arrival - min(value["duration_min"] for value in arrivals)
-            score = route_minutes + max_arrival + 0.25 * spread
+            spread = max_arrival - min(arrival_offsets)
+            score = route_minutes + max_arrival + 0.25 * spread + availability_penalty
         if best is None or score < best["score"]:
             best = {"first": first, "order": order, "arrivals": arrivals, "score": score}
 
     order = best["order"]
-    group_start = start_at + timedelta(minutes=max(value["duration_min"] for value in best["arrivals"]))
+    group_start = max(value["arrival_at"] for value in best["arrivals"])
     warnings = []
 
     def projected_end(current_order: list[int]) -> datetime:
@@ -138,15 +167,23 @@ async def plan_itinerary(
             "user_id": person["user_id"], "name": person["name"], "mode": person["mode"],
             "origin": {"lat": person["lat"], "lng": person["lng"]},
             "travel_time_min": round(minutes),
-            "arrival_at": (start_at + timedelta(minutes=minutes)).isoformat(),
+            "depart_at": route["depart_at"].isoformat(), "arrival_at": route["arrival_at"].isoformat(),
+            "available_from": person.get("available_from").isoformat() if person.get("available_from") else None,
+            "available_until": person.get("available_until").isoformat() if person.get("available_until") else None,
             "distance_km": route["distance_km"], "polyline": route["polyline"],
             "steps": route.get("steps", []), "estimated": route["estimated"],
             "fallback_reason": route.get("fallback_reason"),
         })
+        if person.get("available_until") and route["arrival_at"] > person["available_until"]:
+            warnings.append({
+                "code": "participant_cannot_reach_first_stop", "user_id": person["user_id"],
+                "message": f"{person['name']} 无法在个人结束时间前到达第一站",
+            })
 
     cursor = group_start
     ordered_stops, route_legs = [], []
     total_km = 0.0
+    availability_warned: set[int] = set()
     for position, idx in enumerate(order):
         destination = destinations[idx]
         if position:
@@ -163,6 +200,15 @@ async def plan_itinerary(
             cursor += timedelta(minutes=minutes)
             total_km += km
         arrival = cursor
+        for person in participants:
+            available_until = person.get("available_until")
+            if available_until and arrival > available_until and person["user_id"] not in availability_warned:
+                availability_warned.add(person["user_id"])
+                warnings.append({
+                    "code": "participant_leaves_early", "user_id": person["user_id"],
+                    "destination_id": destination["id"],
+                    "message": f"{person['name']} 的个人结束时间早于到达 {destination['name']}，该参与者无法完成后续行程",
+                })
         hours = destination.get("opening_hours")
         if hours:
             open_hour, open_minute = map(int, hours["open"].split(":"))
@@ -202,7 +248,7 @@ async def plan_itinerary(
         "participant_arrivals": participant_arrivals,
         "group_start_at": group_start.isoformat(), "ordered_stops": ordered_stops,
         "route_legs": route_legs, "warnings": warnings,
-        "total_travel_min": round(max(v["duration_min"] for v in best["arrivals"]) + _route_cost(order, duration_matrix)),
+        "total_travel_min": round((group_start - start_at).total_seconds() / 60 + _route_cost(order, duration_matrix)),
         "total_duration_min": round((cursor - start_at).total_seconds() / 60),
         "total_distance_km": round(total_km, 2),
     }
