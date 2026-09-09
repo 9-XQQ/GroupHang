@@ -78,6 +78,13 @@ class DestinationStatusUpdate(BaseModel):
     visit_status: Literal["candidate", "must_visit", "optional", "excluded"]
 
 
+class SharedTextParseRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    text: str = Field(min_length=2, max_length=10000)
+    default_stay_min: int = Field(default=60, ge=5, le=720)
+
+
 class PlanningSettingsUpdate(BaseModel):
     planned_start_at: datetime
     planned_end_at: datetime

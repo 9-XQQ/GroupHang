@@ -13,6 +13,7 @@ from app.services import itinerary, meeting_point
 from app.services.amap import AmapClient
 from app.services.access import require_trip_member
 from app.services.itinerary import plan_itinerary
+from app.services.shared_text import parse_shared_text
 
 
 class MeetingPointTests(unittest.IsolatedAsyncioTestCase):
@@ -194,6 +195,27 @@ class SchemaTests(unittest.TestCase):
     def test_location_range_is_checked(self):
         with self.assertRaises(ValidationError):
             Location(lat=100, lng=116.4)
+
+
+class SharedTextTests(unittest.TestCase):
+    def test_parses_labeled_place_and_source_url(self):
+        result = parse_shared_text(
+            "名称：故宫博物院\n地址：北京市东城区景山前街4号\n品类：景点\n"
+            "人均：60元\n推荐理由：第一次来北京值得去\nhttps://example.com/post"
+        )
+        self.assertEqual(result["candidates"][0]["name"], "故宫博物院")
+        self.assertEqual(result["candidates"][0]["address"], "北京市东城区景山前街4号")
+        self.assertEqual(result["candidates"][0]["price"], "60元")
+        self.assertEqual(result["source_urls"], ["https://example.com/post"])
+
+    def test_parses_multiple_pipe_separated_lines(self):
+        result = parse_shared_text(
+            "地点A｜北京市东城区地址A｜餐厅｜100元｜推荐菜A\n"
+            "地点B｜北京市西城区地址B｜景点｜免费｜适合拍照",
+            default_stay_min=90,
+        )
+        self.assertEqual([item["name"] for item in result["candidates"]], ["地点A", "地点B"])
+        self.assertTrue(all(item["expected_stay_min"] == 90 for item in result["candidates"]))
 
 
 class _ScalarResult:

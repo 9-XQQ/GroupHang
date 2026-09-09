@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import models  # noqa: F401  确保模型注册到 Base.metadata
 from .config import settings
 from .db import engine
-from .routers import auth, destinations, itineraries, meeting_points, participants, trips, votes, ws
+from .routers import auth, destinations, itineraries, meeting_points, participants, shared_text, trips, votes, ws
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.include_router(trips.router)
 app.include_router(participants.router)
 app.include_router(destinations.router)
 app.include_router(itineraries.router)
+app.include_router(shared_text.router)
 app.include_router(meeting_points.router)
 app.include_router(votes.router)
 app.include_router(ws.router)

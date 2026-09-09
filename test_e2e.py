@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 
 BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
+REQUEST_TIMEOUT_SECONDS = 120
 
 
 def request(method: str, path: str, body: dict | None = None, token: str | None = None) -> dict:
@@ -32,7 +33,7 @@ def request(method: str, path: str, body: dict | None = None, token: str | None 
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             raw = resp.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
@@ -66,20 +67,20 @@ def main() -> None:
     print(f"==> 目标服务: {BASE_URL}\n")
 
     # 1. 登录两个用户
-    print("[1/6] 登录两个用户...")
+    print("[1/7] 登录两个用户...")
     token_a, uid_a = login("13800000001", "小明")
     token_b, uid_b = login("13800000002", "小红")
     print(f"      小明 id={uid_a}，小红 id={uid_b}\n")
 
     # 2. 小明创建 trip
-    print("[2/6] 小明创建 trip...")
+    print("[2/7] 小明创建 trip...")
     trip = request("POST", "/trips", {"title": "周六火锅局", "default_mode": "transit"}, token_a)
     trip_id = trip["trip_id"]
     invite_code = trip["invite_code"]
     print(f"      trip_id={trip_id}，邀请码={invite_code}\n")
 
     # 3. 小红加入
-    print("[3/6] 小红用邀请码加入...")
+    print("[3/7] 小红用邀请码加入...")
     joined = request("POST", f"/trips/{trip_id}/join", {"invite_code": invite_code}, token_b)
     print(f"      participant_id={joined['participant_id']}，role={joined['role']}\n")
 
@@ -118,7 +119,7 @@ def main() -> None:
     print("      Phase 2A 地点协作接口验证通过\n")
 
     # 4. 两人各自填出发点 + 出行方式
-    print("[4/6] 两人填出发点 + 出行方式...")
+    print("[4/7] 两人填出发点 + 出行方式...")
     request(
         "PUT",
         f"/trips/{trip_id}/participants/me",
@@ -171,14 +172,37 @@ def main() -> None:
     )
     print("      Phase 2B 第一站、完整地点顺序和时间线验证通过\n")
 
-    # 5. 触发约点推荐
-    print("[5/6] 触发约点推荐（minimax 公平优先）...")
+    # Phase 3：解析分享文本、地理编码并确认加入候选地点。
+    print("[5/7] 解析分享文本并加入地点...")
+    parsed = request(
+        "POST", f"/trips/{trip_id}/shared-text/parse",
+        {"text": "名称：天坛公园\n地址：北京市东城区天坛路甲1号\n品类：景点\n推荐理由：古建筑",
+         "default_stay_min": 90}, token_a,
+    )
+    if not parsed["candidates"] or parsed["candidates"][0].get("lat") is None:
+        raise RuntimeError(f"Phase 3 未能提取并定位地点：{parsed}")
+    imported = parsed["candidates"][0]
+    imported_destination = request(
+        "POST", f"/trips/{trip_id}/destinations",
+        {"name": imported["name"], "address": imported["address"],
+         "lat": imported["lat"], "lng": imported["lng"],
+         "category": imported["category"] or None,
+         "expected_stay_min": imported["expected_stay_min"],
+         "note": imported["reason"] or None}, token_a,
+    )
+    current_destinations = request("GET", f"/trips/{trip_id}/destinations", token=token_a)["destinations"]
+    if not any(item["id"] == imported_destination["id"] for item in current_destinations):
+        raise RuntimeError("Phase 3 确认后的地点未出现在 trip 地点列表")
+    print("      Phase 3 文本提取、地理编码和确认加入验证通过\n")
+
+    # 6. 触发约点推荐
+    print("[6/7] 触发约点推荐（minimax 公平优先）...")
     result = request("POST", f"/trips/{trip_id}/meeting-points", {"objective": "minimax"}, token_a)
     candidates = result["candidates"]
     print(f"      得到 {len(candidates)} 个候选点\n")
 
     # 6. 打印结果
-    print("[6/6] 推荐结果：\n")
+    print("[7/7] 推荐结果：\n")
     for c in candidates:
         poi = c["poi"]
         print(f"  排名 {c['rank']} | {poi['name']}")

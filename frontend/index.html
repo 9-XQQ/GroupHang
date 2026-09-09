@@ -216,6 +216,18 @@
       <div class="row"><button onclick="savePlanningSettings()" class="secondary">保存参数</button><button onclick="generateItinerary()" style="flex:1">规划全部地点</button></div>
       <div class="log" id="planLog"></div>
     </div>
+
+    <div>
+      <h2>8. 分享文本导入地点（Phase 3）</h2>
+      <textarea id="sharedText" maxlength="10000" rows="7" style="width:100%;box-sizing:border-box" placeholder="每个地点空一行，例如：&#10;名称：故宫博物院&#10;地址：北京市东城区景山前街4号&#10;品类：景点&#10;推荐理由：第一次来北京必去&#10;&#10;也支持：名称｜地址｜品类｜人均｜推荐理由"></textarea>
+      <div class="row" style="margin-top:6px">
+        <label class="muted" for="importStay" style="align-self:center">默认停留（分钟）</label>
+        <input id="importStay" type="number" min="5" max="720" value="60" style="width:80px" />
+        <button onclick="parseSharedText()" style="flex:1">解析并定位</button>
+      </div>
+      <div class="log">解析结果必须人工确认后才会加入当前 trip。</div>
+      <div id="sharedTextResults"></div>
+    </div>
   </div>
 
   <!-- 右侧地图 -->
@@ -248,6 +260,7 @@ const state = {
   tripId: null,
   candidates: [],
   destinations: [],
+  importedCandidates: [],
   itinerary: null,
   votes: {},          // candidate_id -> {up, down, my_vote}
   voting: new Set(),  // 正在提交的 candidate_id
@@ -333,6 +346,7 @@ function clearTripState() {
   state.participants = [];
   state.candidates = [];
   state.destinations = [];
+  state.importedCandidates = [];
   state.itinerary = null;
   state.votes = {};
   state.voting.clear();
@@ -343,6 +357,7 @@ function clearTripState() {
   updatePickedStatus();
   renderParticipants();
   renderDestinations();
+  renderSharedTextResults();
   renderResult();
   renderItinerary();
   drawAll();
@@ -580,6 +595,66 @@ function renderDestinations() {
       </div>
     </div>`;
   }).join('');
+}
+
+// ===== Phase 3 分享文本导入 =====
+async function parseSharedText() {
+  if (!state.tripId) return toast('请先创建或加入 trip', true);
+  const text = document.getElementById('sharedText').value.trim();
+  const stay = Number(document.getElementById('importStay').value);
+  if (text.length < 2) return toast('请粘贴包含地点的分享文本', true);
+  if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('默认停留时间应为 5～720 分钟', true);
+  try {
+    const result = await api(`/trips/${state.tripId}/shared-text/parse`, 'POST', { text, default_stay_min: stay });
+    state.importedCandidates = result.candidates || [];
+    renderSharedTextResults();
+    (result.warnings || []).forEach(message => toast(message, true));
+    if (state.importedCandidates.length) toast(`识别到 ${state.importedCandidates.length} 个地点，请确认后加入`);
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderSharedTextResults() {
+  const el = document.getElementById('sharedTextResults');
+  if (!el) return;
+  if (!state.importedCandidates.length) { el.innerHTML = ''; return; }
+  el.innerHTML = state.importedCandidates.map((item, index) => {
+    const located = Number.isFinite(item.lat) && Number.isFinite(item.lng);
+    const details = [item.category, item.price, item.reason].filter(Boolean).map(escapeHtml).join(' · ');
+    return `<div class="destination-card">
+      <div class="destination-title">${escapeHtml(item.name)}</div>
+      <div class="muted">${escapeHtml(item.address || '未提取到地址')} · 停留 ${Number(item.expected_stay_min)} 分钟</div>
+      ${details ? `<div class="muted">${details}</div>` : ''}
+      <div class="${located ? 'log' : 'err'}">${located ? `已定位：${Number(item.lng).toFixed(6)}, ${Number(item.lat).toFixed(6)}` : '无法可靠定位，需要手动地图选点'}</div>
+      <div class="destination-actions">
+        ${located ? `<button onclick="addImportedDestination(${index})">确认并加入地点</button>` : `<button onclick="copyImportedToManual(${index})">转到手动选点</button>`}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addImportedDestination(index) {
+  const item = state.importedCandidates[index];
+  if (!item || !Number.isFinite(item.lat) || !Number.isFinite(item.lng)) return;
+  try {
+    await api(`/trips/${state.tripId}/destinations`, 'POST', {
+      name: item.name, address: item.address || null, lat: item.lat, lng: item.lng,
+      category: item.category || null, expected_stay_min: item.expected_stay_min,
+      note: [item.reason, item.price ? `人均：${item.price}` : '', item.source_url ? `来源：${item.source_url}` : ''].filter(Boolean).join('；') || null,
+    });
+    state.importedCandidates.splice(index, 1);
+    renderSharedTextResults();
+    await refreshDestinations();
+    toast('地点已作为候选加入');
+  } catch (e) { toast(e.message, true); }
+}
+
+function copyImportedToManual(index) {
+  const item = state.importedCandidates[index];
+  if (!item) return;
+  document.getElementById('destinationName').value = item.name || '';
+  document.getElementById('destinationAddress').value = item.address || '';
+  document.getElementById('destinationStay').value = item.expected_stay_min || 60;
+  toast('已填入地点表单，请在地图上精确选择入口后添加');
 }
 
 // ===== Phase 2B 路线规划 =====
