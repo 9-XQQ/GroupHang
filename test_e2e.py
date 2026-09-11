@@ -172,6 +172,15 @@ def main() -> None:
     )
     if confirmed["status"] != "confirmed":
         raise RuntimeError(f"Phase 2C 方案确认失败：{confirmed}")
+    expect_http_error(
+        409, "PUT", f"/trips/{trip_id}/planning-settings",
+        {
+            "planned_start_at": "2026-09-05T14:00:00+08:00",
+            "planned_end_at": "2026-09-05T20:00:00+08:00",
+            "group_transport_mode": "transit", "optimization_objective": "distance",
+        }, token_a,
+    )
+    request("POST", f"/trips/{trip_id}/reopen", {}, token_a)
     request(
         "PUT", f"/trips/{trip_id}/planning-settings",
         {

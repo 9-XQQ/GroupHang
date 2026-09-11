@@ -2,7 +2,7 @@
 import secrets
 import string
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,6 +74,8 @@ async def _join(db: AsyncSession, trip: Trip, user: User) -> dict:
     existing = result.scalar_one_or_none()
     if existing is not None:
         return {"trip_id": trip.id, "participant_id": existing.id, "role": existing.role}
+    if trip.status != "active":
+        raise HTTPException(status_code=409, detail="trip 已确认，暂不接受新成员加入")
 
     participant = TripParticipant(
         trip_id=trip.id, user_id=user.id, role="member", transport_mode=trip.default_mode
@@ -160,8 +162,44 @@ async def get_trip(
         "trip_id": trip.id,
         "title": trip.title,
         "status": trip.status,
+        "my_role": next((p.role for p in parts if p.user_id == user.id), "member"),
+        "invite_code": trip.invite_code if trip.creator_id == user.id else None,
         "default_mode": trip.default_mode,
         "participants": participants,
         "meeting_points_ready": latest_mp is not None,
         "last_computed_at": latest_mp.computed_at if latest_mp else None,
     }
+
+
+@router.post("/{trip_id}/reopen")
+async def reopen_trip(
+    trip_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    participant = await require_trip_member(db, trip_id, user)
+    if participant.role != "creator":
+        raise HTTPException(status_code=403, detail="只有发起人可以重新编辑 trip")
+    trip = await db.get(Trip, trip_id)
+    if trip.status == "active":
+        return {"trip_id": trip.id, "status": trip.status, "input_version": trip.input_version}
+    trip.status = "active"
+    trip.input_version = (trip.input_version or 0) + 1
+    await db.commit()
+    await manager.broadcast(trip_id, {"type": "trip_reopened", "trip_id": trip_id, "input_version": trip.input_version})
+    return {"trip_id": trip.id, "status": trip.status, "input_version": trip.input_version}
+
+
+@router.delete("/{trip_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_trip(
+    trip_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    participant = await require_trip_member(db, trip_id, user)
+    if participant.role != "creator":
+        raise HTTPException(status_code=403, detail="只有发起人可以删除 trip")
+    trip = await db.get(Trip, trip_id)
+    await db.delete(trip)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

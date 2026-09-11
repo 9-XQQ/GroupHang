@@ -22,3 +22,13 @@ async def require_trip_member(db: AsyncSession, trip_id: int, user: User) -> Tri
     if participant is None:
         raise HTTPException(status_code=403, detail="你不是该 trip 的参与者")
     return participant
+
+
+async def require_trip_active(db: AsyncSession, trip_id: int) -> Trip:
+    """要求 trip 尚未确认锁定；确认后的修改必须先由创建者重新开启。"""
+    trip = await db.get(Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="trip 不存在")
+    if trip.status != "active":
+        raise HTTPException(status_code=409, detail="trip 已确认锁定，请由发起人点击“重新编辑”后再修改")
+    return trip

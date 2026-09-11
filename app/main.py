@@ -12,13 +12,15 @@ from . import models  # noqa: F401  确保模型注册到 Base.metadata
 from .config import settings
 from .db import engine
 from .services.amap import amap
-from .routers import auth, destinations, itineraries, meeting_points, participants, shared_text, trips, votes, ws
+from .services.llm_parser import llm_place_parser
+from .routers import auth, destinations, itineraries, meeting_points, participants, places, shared_text, trips, votes, ws
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
     await amap.aclose()
+    await llm_place_parser.aclose()
     await engine.dispose()
 
 
@@ -38,6 +40,7 @@ app.include_router(trips.router)
 app.include_router(participants.router)
 app.include_router(destinations.router)
 app.include_router(itineraries.router)
+app.include_router(places.router)
 app.include_router(shared_text.router)
 app.include_router(meeting_points.router)
 app.include_router(votes.router)
@@ -74,6 +77,7 @@ async def get_frontend_config() -> dict:
     return {
         "amap_js_key": settings.amap_js_key,
         "amap_js_security_code": settings.amap_js_security_code,
+        "llm_parser_available": llm_place_parser.available,
     }
 
 

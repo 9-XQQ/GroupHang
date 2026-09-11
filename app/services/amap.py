@@ -6,7 +6,10 @@
 高德坐标格式统一为 "经度,纬度"（lng,lat）。
 """
 import asyncio
+import html
+import re
 from contextvars import ContextVar
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 
@@ -251,6 +254,41 @@ class AmapClient:
 
     # ---- POI / 地理编码 / 停车场 ----
 
+    async def search_pois(self, keywords: str, city: str, limit: int = 10) -> list[dict]:
+        """在指定城市内搜索地址/POI，供用户从多个候选项中人工确认。"""
+        data = await self._get(
+            "/v3/place/text",
+            {
+                "keywords": keywords,
+                "city": city,
+                "citylimit": "true",
+                "offset": str(limit),
+                "page": "1",
+                "extensions": "base",
+            },
+        )
+        if not data:
+            return []
+        results = []
+        for poi in data.get("pois", []):
+            try:
+                lng, lat = poi["location"].split(",")
+                raw_address = poi.get("address")
+                address = raw_address if isinstance(raw_address, str) else ""
+                results.append({
+                    "poi_id": poi.get("id") or None,
+                    "name": str(poi.get("name") or "未命名地点"),
+                    "address": address,
+                    "district": str(poi.get("adname") or ""),
+                    "city": str(poi.get("cityname") or city),
+                    "category": str(poi.get("type") or ""),
+                    "lat": float(lat),
+                    "lng": float(lng),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue
+        return results[:limit]
+
     async def nearby_pois(
         self,
         location: tuple,
@@ -318,6 +356,121 @@ class AmapClient:
             return None
         lng, lat = geocodes[0]["location"].split(",")
         return {"lat": float(lat), "lng": float(lng), "formatted": geocodes[0].get("formatted_address", "")}
+
+    # ---- 高德分享链接 ----
+
+    @staticmethod
+    def is_amap_url(url: str) -> bool:
+        try:
+            host = (urlparse(url).hostname or "").lower().rstrip(".")
+        except ValueError:
+            return False
+        return host == "amap.com" or host.endswith(".amap.com")
+
+    @staticmethod
+    def _place_from_amap_url(url: str) -> dict | None:
+        """解析高德公开 URI 中直接携带的坐标和名称，不发起网络请求。"""
+        try:
+            parsed = urlparse(url)
+            query = parse_qs(parsed.query)
+        except ValueError:
+            return None
+
+        def first(*names: str) -> str:
+            for name in names:
+                values = query.get(name)
+                if values and values[0]:
+                    return unquote(str(values[0])).strip()
+            return ""
+
+        # 高德 app 分享短链通常跳转为 wb.amap.com/?p=POI_ID,lat,lng,name,address。
+        raw_p = first("p")
+        if raw_p:
+            parts = [part.strip() for part in raw_p.split(",")]
+            if len(parts) >= 3:
+                try:
+                    p_lat, p_lng = float(parts[1]), float(parts[2])
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    if -90 <= p_lat <= 90 and -180 <= p_lng <= 180:
+                        return {
+                            "poi_id": parts[0] or None,
+                            "name": (parts[3] if len(parts) > 3 and parts[3] else "高德分享地点")[:120],
+                            "address": (",".join(parts[4:]) if len(parts) > 4 else "")[:300],
+                            "lat": p_lat,
+                            "lng": p_lng,
+                        }
+
+        raw_position = first("position", "location", "dest", "to")
+        lng = lat = None
+        if raw_position:
+            numbers = re.findall(r"-?\d+(?:\.\d+)?", raw_position)
+            if len(numbers) >= 2:
+                lng, lat = float(numbers[0]), float(numbers[1])
+        if lng is None or lat is None:
+            raw_lng, raw_lat = first("lng", "lon", "longitude"), first("lat", "latitude")
+            try:
+                lng, lat = float(raw_lng), float(raw_lat)
+            except (TypeError, ValueError):
+                return None
+        if not (-180 <= lng <= 180 and -90 <= lat <= 90):
+            return None
+        name = first("name", "destName", "pname", "title") or "高德分享地点"
+        address = first("address", "addr")
+        return {"name": name[:120], "address": address[:300], "lat": lat, "lng": lng}
+
+    async def resolve_amap_share_url(self, url: str) -> dict | None:
+        """解析高德地点分享链接；只跟随高德域名内的有限跳转。"""
+        self.last_error = None
+        if not self.is_amap_url(url):
+            self.last_error = "不是受支持的高德地图链接"
+            return None
+        current = url
+        for _ in range(4):
+            direct = self._place_from_amap_url(current)
+            if direct:
+                return {**direct, "source_url": url, "resolved_url": current}
+
+            poi_match = re.search(r"/(?:place|poi)/([A-Za-z0-9]+)", urlparse(current).path, re.I)
+            if poi_match and self.available:
+                data = await self._get("/v3/place/detail", {"id": poi_match.group(1)})
+                pois = data.get("pois", []) if data else []
+                if pois:
+                    poi = pois[0]
+                    try:
+                        lng, lat = poi["location"].split(",")
+                        address = poi.get("address") if isinstance(poi.get("address"), str) else ""
+                        return {
+                            "name": str(poi.get("name") or "高德分享地点")[:120],
+                            "address": address[:300], "lat": float(lat), "lng": float(lng),
+                            "source_url": url, "resolved_url": current,
+                        }
+                    except (KeyError, TypeError, ValueError):
+                        pass
+
+            try:
+                response = await self._http_client().get(current, headers={"User-Agent": "route-plan/0.2"})
+            except httpx.HTTPError as exc:
+                self.last_error = f"高德分享链接访问失败：{type(exc).__name__}"
+                return None
+            if response.is_redirect:
+                location = response.headers.get("location", "")
+                next_url = urljoin(current, location)
+                if not location or not self.is_amap_url(next_url):
+                    self.last_error = "高德短链接跳转目标无效"
+                    return None
+                current = next_url
+                continue
+            body = html.unescape(response.text[:200_000])
+            links = re.findall(r"https?://[^\s\"'<>]+", body)
+            next_url = next((candidate for candidate in links if self.is_amap_url(candidate) and candidate != current), "")
+            if next_url:
+                current = next_url
+                continue
+            break
+        self.last_error = "链接中未找到可确认的高德地点坐标"
+        return None
 
     # ---- 解析辅助 ----
 

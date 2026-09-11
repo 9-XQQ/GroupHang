@@ -4,10 +4,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
-from ..models import MeetingPointResult, Trip, TripParticipant, User
+from ..models import MeetingPointResult, TripParticipant, User
 from ..schemas import MeetingPointRequest
 from ..security import get_current_user
-from ..services.access import require_trip_member
+from ..services.access import require_trip_active, require_trip_member
 from ..services.meeting_point import recommend
 from ..services.ws import manager
 
@@ -58,10 +58,8 @@ async def compute_meeting_points(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    trip = await db.get(Trip, trip_id)
-    if trip is None:
-        raise HTTPException(status_code=404, detail="trip 不存在")
     await require_trip_member(db, trip_id, user)
+    await require_trip_active(db, trip_id)
 
     participants = await _load_participants(trip_id, db)
     objective = body.objective if body else None

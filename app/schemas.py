@@ -94,6 +94,7 @@ class SharedTextParseRequest(BaseModel):
 
     text: str = Field(min_length=2, max_length=10000)
     default_stay_min: int = Field(default=60, ge=5, le=720)
+    use_llm: bool = False
 
 
 class PlanningSettingsUpdate(BaseModel):

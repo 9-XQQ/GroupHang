@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     amap_js_key: str = ""
     amap_js_security_code: str = ""
 
+    # 可选 LLM 地点解析（OpenAI-compatible Chat Completions；未配置时自动使用规则解析）
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = ""
+    llm_timeout_seconds: float = 20.0
+
     # 数据库（asyncpg 驱动）
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/trip_planner"
 

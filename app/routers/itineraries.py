@@ -7,7 +7,7 @@ from ..db import get_db
 from ..models import ItineraryPlan, Trip, TripDestination, TripParticipant, User
 from ..schemas import PlanningSettingsUpdate
 from ..security import get_current_user
-from ..services.access import require_trip_member
+from ..services.access import require_trip_active, require_trip_member
 from ..services.itinerary import plan_itinerary
 from ..services.ws import manager
 
@@ -34,7 +34,7 @@ async def update_planning_settings(
     participant = await require_trip_member(db, trip_id, user)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以修改规划参数")
-    trip = await db.get(Trip, trip_id)
+    trip = await require_trip_active(db, trip_id)
     trip.planned_start_at = body.planned_start_at
     trip.planned_end_at = body.planned_end_at
     trip.group_transport_mode = body.group_transport_mode
@@ -67,7 +67,7 @@ async def create_itinerary_plan(
     trip_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
-    trip = await db.get(Trip, trip_id)
+    trip = await require_trip_active(db, trip_id)
     if not trip.planned_start_at or not trip.planned_end_at:
         raise HTTPException(status_code=409, detail="请先设置行程开始和结束时间")
 
@@ -156,7 +156,10 @@ async def confirm_plan(
         raise HTTPException(status_code=404, detail="路线方案不存在")
     if plan.input_version != trip.input_version:
         raise HTTPException(status_code=409, detail="地点或规划参数已变化，请重新生成路线")
+    if trip.status != "active":
+        raise HTTPException(status_code=409, detail="trip 已确认锁定")
     plan.status = "confirmed"
+    trip.status = "finished"
     await db.commit()
     await db.refresh(plan)
     await manager.broadcast(trip_id, {"type": "itinerary_confirmed", "trip_id": trip_id, "plan_id": plan.id})

@@ -11,8 +11,9 @@ from app.models import TripVote
 from app.routers.votes import aggregate_votes
 from app.services import itinerary, meeting_point
 from app.services.amap import AmapClient
-from app.services.access import require_trip_member
+from app.services.access import require_trip_active, require_trip_member
 from app.services.itinerary import plan_itinerary
+from app.services.llm_parser import LlmPlaceParser
 from app.services.shared_text import parse_shared_text
 
 
@@ -164,6 +165,61 @@ class AmapParsingTests(unittest.TestCase):
         self.assertEqual(AmapClient._duration_to_minutes("1551.0"), 25.9)
 
 
+class AmapPoiSearchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_text_search_is_city_limited_and_skips_invalid_locations(self):
+        client = AmapClient(key="test-key")
+        response = {"pois": [
+            {"id": "B001", "name": "岳麓山南门", "address": "登高路", "adname": "岳麓区",
+             "cityname": "长沙市", "type": "风景名胜", "location": "112.937100,28.185200"},
+            {"id": "BROKEN", "name": "无坐标候选"},
+        ]}
+        with patch.object(client, "_get", AsyncMock(return_value=response)) as get:
+            results = await client.search_pois("岳麓山 南门", "长沙市", 5)
+
+        self.assertEqual(get.await_args.args[0], "/v3/place/text")
+        self.assertEqual(get.await_args.args[1]["city"], "长沙市")
+        self.assertEqual(get.await_args.args[1]["citylimit"], "true")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["poi_id"], "B001")
+        self.assertEqual(results[0]["lat"], 28.1852)
+
+
+class AmapShareLinkTests(unittest.IsolatedAsyncioTestCase):
+    def test_wb_share_p_parameter_extracts_lat_lng_name_and_address(self):
+        place = AmapClient._place_from_amap_url(
+            "https://wb.amap.com/?p=B0JG77TJ8F%2C23.124446989180413%2C113.24179038405416%2C"
+            "%E9%BB%84%E8%AE%B0%E7%B1%B3%E7%B3%95%2C%E8%8D%94%E6%B9%BE%E8%B7%AF3%E5%8F%B7"
+        )
+        self.assertEqual(place["poi_id"], "B0JG77TJ8F")
+        self.assertEqual(place["name"], "黄记米糕")
+        self.assertEqual(place["address"], "荔湾路3号")
+        self.assertAlmostEqual(place["lat"], 23.124446989180413)
+        self.assertAlmostEqual(place["lng"], 113.24179038405416)
+
+    def test_direct_marker_url_extracts_gcj02_coordinate_and_name(self):
+        place = AmapClient._place_from_amap_url(
+            "https://uri.amap.com/marker?position=112.9371,28.1852&name=%E5%B2%B3%E9%BA%93%E5%B1%B1%E5%8D%97%E9%97%A8"
+        )
+        self.assertEqual(place["name"], "岳麓山南门")
+        self.assertEqual(place["lng"], 112.9371)
+        self.assertEqual(place["lat"], 28.1852)
+
+    async def test_non_amap_url_is_not_accepted_for_remote_resolution(self):
+        client = AmapClient(key="test-key")
+        result = await client.resolve_amap_share_url("https://example.com/?position=112.9,28.1")
+        self.assertIsNone(result)
+        self.assertIn("不是受支持", client.last_error)
+
+    async def test_direct_amap_url_needs_no_network_request(self):
+        client = AmapClient(key="")
+        with patch.object(client, "_http_client") as http_client:
+            result = await client.resolve_amap_share_url(
+                "https://uri.amap.com/marker?position=116.3972,39.9163&name=%E6%95%85%E5%AE%AB"
+            )
+        http_client.assert_not_called()
+        self.assertEqual(result["name"], "故宫")
+
+
 class AmapTransitTests(unittest.IsolatedAsyncioTestCase):
     async def test_transit_uses_integrated_endpoint_and_returns_steps(self):
         client = AmapClient(key="test-key")
@@ -249,6 +305,22 @@ class SharedTextTests(unittest.TestCase):
         self.assertTrue(all(item["expected_stay_min"] == 90 for item in result["candidates"]))
 
 
+class LlmPlaceParserTests(unittest.TestCase):
+    def test_valid_fenced_json_is_schema_validated(self):
+        places = LlmPlaceParser.parse_json_content(
+            '```json\n{"places":[{"name":"岳麓山南门","address":"长沙市岳麓区登高路",'
+            '"category":"景点","price":"免费","reason":"方便进入"}]}\n```'
+        )
+        self.assertEqual(places[0]["name"], "岳麓山南门")
+        self.assertEqual(places[0]["category"], "景点")
+
+    def test_non_json_or_missing_name_is_rejected(self):
+        with self.assertRaises((ValueError, ValidationError)):
+            LlmPlaceParser.parse_json_content("不是 JSON")
+        with self.assertRaises((ValueError, ValidationError)):
+            LlmPlaceParser.parse_json_content('{"places":[{"address":"长沙市"}]}')
+
+
 class _ScalarResult:
     def __init__(self, value):
         self.value = value
@@ -280,6 +352,17 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         participant = SimpleNamespace(id=7)
         db = _FakeDb(trip=object(), participant=participant)
         self.assertIs(await require_trip_member(db, 1, SimpleNamespace(id=1)), participant)
+
+    async def test_confirmed_trip_rejects_mutation(self):
+        db = _FakeDb(trip=SimpleNamespace(status="finished"), participant=None)
+        with self.assertRaises(HTTPException) as caught:
+            await require_trip_active(db, 1)
+        self.assertEqual(caught.exception.status_code, 409)
+
+    async def test_active_trip_allows_mutation(self):
+        trip = SimpleNamespace(status="active")
+        db = _FakeDb(trip=trip, participant=None)
+        self.assertIs(await require_trip_active(db, 1), trip)
 
 
 class VoteAggregationTests(unittest.TestCase):

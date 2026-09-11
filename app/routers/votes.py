@@ -9,7 +9,7 @@ from ..db import get_db
 from ..models import MeetingPointResult, TripDestination, TripVote, User
 from ..schemas import VoteRequest
 from ..security import get_current_user
-from ..services.access import require_trip_member
+from ..services.access import require_trip_active, require_trip_member
 from ..services.ws import manager
 
 router = APIRouter(prefix="/trips/{trip_id}/votes", tags=["votes"])
@@ -81,6 +81,7 @@ async def vote(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
+    await require_trip_active(db, trip_id)
     await _require_current_candidate(db, trip_id, body.candidate_type, body.candidate_id)
     result = await db.execute(
         select(TripVote).where(

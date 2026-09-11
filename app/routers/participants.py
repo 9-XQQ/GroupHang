@@ -7,7 +7,7 @@ from ..db import get_db
 from ..models import TripParticipant, User
 from ..schemas import ParticipantUpdate
 from ..security import get_current_user
-from ..services.access import require_trip_member
+from ..services.access import require_trip_active, require_trip_member
 from ..services.ws import manager
 
 router = APIRouter(prefix="/trips/{trip_id}/participants", tags=["participants"])
@@ -21,6 +21,7 @@ async def update_me(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
+    await require_trip_active(db, trip_id)
     result = await db.execute(
         select(TripParticipant).where(
             TripParticipant.trip_id == trip_id, TripParticipant.user_id == user.id

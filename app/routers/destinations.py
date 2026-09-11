@@ -7,7 +7,7 @@ from ..db import get_db
 from ..models import Trip, TripDestination, TripVote, User
 from ..schemas import DestinationCreate, DestinationStatusUpdate, DestinationUpdate
 from ..security import get_current_user
-from ..services.access import require_trip_member
+from ..services.access import require_trip_active, require_trip_member
 from ..services.ws import manager
 
 router = APIRouter(prefix="/trips/{trip_id}/destinations", tags=["destinations"])
@@ -66,6 +66,7 @@ async def create_destination(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
+    await require_trip_active(db, trip_id)
     destination = TripDestination(
         trip_id=trip_id,
         submitted_by=user.id,
@@ -138,6 +139,7 @@ async def update_destination(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     participant = await require_trip_member(db, trip_id, user)
+    await require_trip_active(db, trip_id)
     destination = await _load_destination(db, trip_id, destination_id)
     if participant.role != "creator" and destination.submitted_by != user.id:
         raise HTTPException(status_code=403, detail="只能编辑自己提交的地点")
@@ -165,6 +167,7 @@ async def delete_destination(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     participant = await require_trip_member(db, trip_id, user)
+    await require_trip_active(db, trip_id)
     destination = await _load_destination(db, trip_id, destination_id)
     if participant.role != "creator" and destination.submitted_by != user.id:
         raise HTTPException(status_code=403, detail="只能删除自己提交的地点")
@@ -194,6 +197,7 @@ async def update_destination_status(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     participant = await require_trip_member(db, trip_id, user)
+    await require_trip_active(db, trip_id)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以确认地点状态")
     destination = await _load_destination(db, trip_id, destination_id)

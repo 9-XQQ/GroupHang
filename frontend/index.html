@@ -109,6 +109,14 @@
   summary { cursor: pointer; font-weight: 600; color: var(--muted); }
   .cfg { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
   .cfg label { font-size: 12px; color: var(--muted); }
+  .location-tools { border: 1px solid var(--border); border-radius: 8px; padding: 9px; background: #fafbfc; }
+  .location-tools .row { margin-top: 6px; }
+  .flow-hidden { display: none !important; }
+  .workflow-choice button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  #loginStep { order: 1; } #tripStep { order: 2; } .workflow-choice { order: 3; }
+  .location-tools { order: 4; } #startStep { order: 5; } #participantStep { order: 6; }
+  #meetingWorkflow { order: 7; } #destinationWorkflow { order: 7; }
+  #routeWorkflow { order: 8; } #importWorkflow { order: 9; }
 </style>
 </head>
 <body>
@@ -121,18 +129,30 @@
 <div class="layout">
   <!-- 左侧操作面板 -->
   <div class="panel" id="sidePanel">
-    <details>
-      <summary>⚙️ 高德 JS Key 配置（地图需要）</summary>
-      <div class="cfg">
-        <label>JS API Key（Web端，非 Web服务 Key）</label>
-        <input id="amapKey" placeholder="粘贴 JS API Key" />
-        <label>安全密钥 securityJsCode（JS API 2.0 必填）</label>
-        <input id="amapSec" placeholder="粘贴 securityJsCode" />
-        <button class="secondary" onclick="saveAmapCfg()">保存并加载地图</button>
+    <div class="location-tools requires-trip flow-hidden">
+      <h2>地图定位与城市</h2>
+      <div class="row">
+        <input id="cityInput" list="commonCities" placeholder="输入城市，如长沙市" maxlength="30" style="flex:1" />
+        <datalist id="commonCities">
+          <option value="北京市"><option value="上海市"><option value="广州市"><option value="深圳市">
+          <option value="长沙市"><option value="武汉市"><option value="杭州市"><option value="成都市">
+          <option value="南京市"><option value="重庆市"><option value="西安市"><option value="天津市">
+        </datalist>
+        <button class="secondary" onclick="switchMapCity()">切换城市</button>
       </div>
-    </details>
+      <div class="row">
+        <button id="locateButton" onclick="locateMe()" style="flex:1">📍 定位到我</button>
+      </div>
+      <div class="log" id="locationStatus">可手动选择城市，也可授权浏览器定位；两种方式互不冲突。</div>
+      <div class="row">
+        <input id="placeKeywords" placeholder="搜索地址/地点，如岳麓山南门" maxlength="120" style="flex:1" />
+        <button onclick="searchPlaces()">搜索</button>
+      </div>
+      <div class="muted">搜索范围限定为上方城市；公园、景区可直接搜索具体入口名称。</div>
+      <div id="placeSearchResults"></div>
+    </div>
 
-    <div>
+    <div id="loginStep">
       <h2>1. 登录</h2>
       <div class="row">
         <input id="phone" placeholder="11位手机号" inputmode="numeric" maxlength="11"
@@ -142,7 +162,7 @@
       </div>
     </div>
 
-    <div>
+    <div id="tripStep" class="requires-auth flow-hidden">
       <h2>2. 创建 / 加入 trip</h2>
       <div class="row">
         <input id="tripTitle" placeholder="trip 标题" style="flex:1" />
@@ -157,9 +177,22 @@
         <button class="secondary" onclick="openSelectedTrip()">打开</button>
       </div>
       <div class="log" id="tripInfo"></div>
+      <div class="row" id="tripManage" style="display:none;margin-top:6px">
+        <button id="reopenTripButton" class="secondary" onclick="reopenCurrentTrip()" style="display:none;flex:1">重新编辑</button>
+        <button class="secondary" onclick="deleteCurrentTrip()" style="flex:1;color:#d4380d">删除当前 trip</button>
+      </div>
     </div>
 
-    <div>
+    <div class="requires-trip flow-hidden workflow-choice">
+      <h2>3. 选择规划方式</h2>
+      <div class="row">
+        <button id="meetingModeButton" class="secondary" onclick="chooseWorkflow('meeting')" style="flex:1">共同约点</button>
+        <button id="routeModeButton" class="secondary" onclick="chooseWorkflow('route')" style="flex:1">多地点路线</button>
+      </div>
+      <div class="log" id="tripLockStatus"></div>
+    </div>
+
+    <div id="startStep" class="requires-trip flow-hidden">
       <h2>3. 我的出发点</h2>
       <div class="row">
         <label><input type="radio" name="mode" value="driving" checked /> 自驾</label>
@@ -177,7 +210,7 @@
       <div class="log" id="startStatus" style="color:#8a919c"></div>
     </div>
 
-    <div>
+    <div id="participantStep" class="requires-trip flow-hidden">
       <h2>4. 参与者</h2>
       <div class="row">
         <button class="secondary" onclick="refreshParticipants()" style="flex:1">刷新参与者</button>
@@ -185,7 +218,7 @@
       <div id="participantList" class="log"></div>
     </div>
 
-    <div>
+    <div id="meetingWorkflow" data-workflow="meeting" class="flow-hidden">
       <h2>5. 约点推荐</h2>
       <div class="row">
         <select id="objective">
@@ -197,7 +230,7 @@
       <div class="log" id="recommendLog"></div>
     </div>
 
-    <div>
+    <div id="destinationWorkflow" data-workflow="route" class="flow-hidden">
       <h2>6. 共同添加想去地点（Phase 2A）</h2>
       <input id="destinationName" placeholder="地点名称" maxlength="120" style="width:100%" />
       <input id="destinationAddress" placeholder="地址（选填）" maxlength="300" style="width:100%;margin-top:6px" />
@@ -211,7 +244,7 @@
       <div id="destinationList"></div>
     </div>
 
-    <div>
+    <div id="routeWorkflow" data-workflow="route" class="flow-hidden">
       <h2>7. 多地点路线规划（Phase 2B）</h2>
       <label class="muted">开始时间</label><input id="planStart" type="datetime-local" style="width:100%" />
       <label class="muted">结束时间</label><input id="planEnd" type="datetime-local" style="width:100%" />
@@ -223,15 +256,16 @@
       <div class="log" id="planLog"></div>
     </div>
 
-    <div>
+    <div id="importWorkflow" data-workflow="route" class="flow-hidden">
       <h2>8. 分享文本导入地点（Phase 3）</h2>
-      <textarea id="sharedText" maxlength="10000" rows="7" style="width:100%;box-sizing:border-box" placeholder="每个地点空一行，例如：&#10;名称：故宫博物院&#10;地址：北京市东城区景山前街4号&#10;品类：景点&#10;推荐理由：第一次来北京必去&#10;&#10;也支持：名称｜地址｜品类｜人均｜推荐理由"></textarea>
+      <textarea id="sharedText" maxlength="10000" rows="7" style="width:100%;box-sizing:border-box" placeholder="可直接粘贴高德地点分享链接，或输入：&#10;名称：故宫博物院&#10;地址：北京市东城区景山前街4号&#10;&#10;也支持：名称｜地址｜品类｜人均｜推荐理由"></textarea>
       <div class="row" style="margin-top:6px">
         <label class="muted" for="importStay" style="align-self:center">默认停留（分钟）</label>
         <input id="importStay" type="number" min="5" max="720" value="60" style="width:80px" />
         <button onclick="parseSharedText()" style="flex:1">解析并定位</button>
       </div>
-      <div class="log">解析结果必须人工确认后才会加入当前 trip。</div>
+      <label class="muted" id="llmParserLabel"><input id="useLlmParser" type="checkbox" disabled /> AI 增强解析（正在检查服务端配置）</label>
+      <div class="log">支持高德地点/导航分享链接及结构化文本；解析结果必须人工确认后才会加入当前 trip。</div>
       <div id="sharedTextResults"></div>
     </div>
   </div>
@@ -276,6 +310,10 @@ const state = {
   fbBounds: null,     // fallback 散点图当前坐标范围
   map: null,          // AMap 实例
   ws: null,           // WebSocket 连接
+  currentCity: '',    // 用户主动选择或定位识别出的城市，仅控制地图视野
+  placeSearchResults: [],
+  currentTrip: null,
+  workflowMode: '',
 };
 
 // 同一浏览器的多个标签页应保持一个当前账号；多账号联调请使用无痕窗口或不同浏览器。
@@ -296,6 +334,8 @@ if (authChannel) {
 localStorage.removeItem('token');
 localStorage.removeItem('user');
 localStorage.removeItem('tripId');
+localStorage.removeItem('amapKey');
+localStorage.removeItem('amapSec');
 
 // ===== 通用 API =====
 async function api(path, method = 'GET', body = null) {
@@ -346,6 +386,29 @@ function renderUser() {
   const maskedPhone = phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : state.user?.id;
   el.textContent = state.user ? `👤 ${state.user.name}（${maskedPhone}）` : '未登录';
   document.getElementById('logoutButton').style.display = state.user ? 'inline-block' : 'none';
+  updateFlowUI();
+}
+
+function updateFlowUI() {
+  document.querySelectorAll('.requires-auth').forEach(el => el.classList.toggle('flow-hidden', !state.user));
+  document.querySelectorAll('.requires-trip').forEach(el => el.classList.toggle('flow-hidden', !state.tripId));
+  document.querySelectorAll('[data-workflow]').forEach(el => {
+    el.classList.toggle('flow-hidden', !state.tripId || el.dataset.workflow !== state.workflowMode);
+  });
+  document.getElementById('loginStep').classList.toggle('flow-hidden', Boolean(state.user));
+  document.getElementById('meetingModeButton').classList.toggle('active', state.workflowMode === 'meeting');
+  document.getElementById('routeModeButton').classList.toggle('active', state.workflowMode === 'route');
+  const locked = state.currentTrip?.status === 'finished';
+  document.getElementById('tripLockStatus').textContent = locked
+    ? '🔒 最终路线已确认，当前 trip 为只读。发起人可点击“重新编辑”。'
+    : (state.tripId ? '请选择一种规划方式继续。' : '');
+  document.getElementById('tripManage').style.display = state.currentTrip?.my_role === 'creator' ? 'flex' : 'none';
+  document.getElementById('reopenTripButton').style.display = locked ? 'block' : 'none';
+}
+
+function chooseWorkflow(mode) {
+  state.workflowMode = mode;
+  updateFlowUI();
 }
 
 function clearTripState() {
@@ -359,6 +422,8 @@ function clearTripState() {
   state.votes = {};
   state.voting.clear();
   state.picked = null;
+  state.currentTrip = null;
+  state.workflowMode = '';
   localStorage.removeItem('tripId');
   document.getElementById('tripInfo').textContent = '';
   document.getElementById('startStatus').textContent = '';
@@ -369,6 +434,7 @@ function clearTripState() {
   renderResult();
   renderItinerary();
   drawAll();
+  updateFlowUI();
 }
 
 function clearSession(notifyPeers = true) {
@@ -396,7 +462,7 @@ async function refreshMyTrips() {
     const result = await api('/trips');
     state.myTrips = result.trips || [];
     select.innerHTML = '<option value="">选择创建或加入过的 trip</option>' + state.myTrips.map(item =>
-      `<option value="${Number(item.trip_id)}">#${Number(item.trip_id)} ${escapeHtml(item.title)}（${item.role === 'creator' ? '我创建的' : '我加入的'} / ${escapeHtml(item.status)}）</option>`
+      `<option value="${Number(item.trip_id)}">#${Number(item.trip_id)} ${escapeHtml(item.title)}（${item.role === 'creator' ? '我创建的' : '我加入的'} / ${item.status === 'finished' ? '已确认' : '规划中'}）</option>`
     ).join('');
   } catch (e) { toast(e.message, true); }
 }
@@ -405,28 +471,31 @@ async function openSelectedTrip() {
   const tripId = Number(document.getElementById('myTripSelect').value);
   if (!tripId) return toast('请选择一个 trip', true);
   try {
-    const trip = await api(`/trips/${tripId}`);
-    clearTripState();
-    state.tripId = tripId;
-    document.getElementById('tripInfo').textContent = `trip #${tripId}：${trip.title}`;
-    await Promise.all([refreshParticipants(), refreshDestinations(), fetchLatestItinerary()]);
-    connectWS();
-    toast(`已打开 trip #${tripId}`);
+    await openTrip(tripId);
   } catch (e) { toast(e.message, true); }
+}
+
+async function openTrip(tripId) {
+  const trip = await api(`/trips/${tripId}`);
+  clearTripState();
+  state.tripId = Number(tripId);
+  state.currentTrip = trip;
+  const statusText = trip.status === 'finished' ? '已确认' : '规划中';
+  document.getElementById('tripInfo').innerHTML = `trip #${Number(tripId)}：${escapeHtml(trip.title)} · ${statusText}`
+    + (trip.invite_code ? `<br>邀请码：<b>${escapeHtml(trip.invite_code)}</b>（可复制给参与者）` : '');
+  updateFlowUI();
+  await Promise.all([refreshParticipants(), refreshDestinations(), fetchLatestItinerary()]);
+  connectWS();
+  toast(`已打开 trip #${tripId}`);
 }
 
 async function doCreateTrip() {
   const title = document.getElementById('tripTitle').value.trim() || '周末出行';
   try {
     const r = await api('/trips', 'POST', { title, default_mode: 'transit' });
-    state.tripId = r.trip_id;
-    document.getElementById('tripInfo').textContent =
-      `trip #${r.trip_id} 已创建，邀请码 ${r.invite_code}`;
     toast('trip 创建成功');
-    refreshMyTrips();
-    refreshParticipants();
-    refreshDestinations();
-    connectWS();
+    await refreshMyTrips();
+    await openTrip(r.trip_id);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -435,12 +504,32 @@ async function doJoinTrip() {
   if (!code) return toast('请输入邀请码');
   try {
     const r = await api('/trips/join-by-code', 'POST', { invite_code: code });
-    state.tripId = r.trip_id;
     toast(`已加入 trip #${r.trip_id}`);
-    refreshMyTrips();
-    refreshParticipants();
-    refreshDestinations();
-    connectWS();
+    await refreshMyTrips();
+    await openTrip(r.trip_id);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function reopenCurrentTrip() {
+  if (!state.tripId) return;
+  if (!confirm('重新编辑会使已确认路线变为历史版本，需要重新规划并确认。是否继续？')) return;
+  try {
+    await api(`/trips/${state.tripId}/reopen`, 'POST', {});
+    await refreshMyTrips();
+    await openTrip(state.tripId);
+    toast('trip 已重新开启，可以修改并重新规划');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteCurrentTrip() {
+  if (!state.tripId || state.currentTrip?.my_role !== 'creator') return;
+  const title = state.currentTrip.title || `trip #${state.tripId}`;
+  if (!confirm(`确认永久删除“${title}”吗？参与者、地点和路线记录都会删除，且无法恢复。`)) return;
+  try {
+    await api(`/trips/${state.tripId}`, 'DELETE');
+    clearTripState();
+    await refreshMyTrips();
+    toast('trip 已删除');
   } catch (e) { toast(e.message, true); }
 }
 
@@ -464,7 +553,10 @@ async function putStart(lat, lng, mode, availableFrom = '', availableUntil = '')
   const statusEl = document.getElementById('startStatus');
   try {
     const r = await api(`/trips/${state.tripId}/participants/me`, 'PUT', {
-      start_location: { lat, lng, address: '' },
+      start_location: {
+        lat, lng,
+        address: coordinatesMatchPicked(lat, lng) ? (state.picked.address || '') : '',
+      },
       transport_mode: mode,
       available_from: availableFrom ? new Date(availableFrom).toISOString() : null,
       available_until: availableUntil ? new Date(availableUntil).toISOString() : null,
@@ -481,6 +573,169 @@ async function putStart(lat, lng, mode, availableFrom = '', availableUntil = '')
     statusEl.style.color = '#d4380d';
     toast(e.message, true);
   }
+}
+
+// ===== 地图定位与城市 =====
+function coordinatesMatchPicked(lat, lng) {
+  return Boolean(state.picked)
+    && Math.abs(Number(state.picked.lat) - Number(lat)) < 0.00001
+    && Math.abs(Number(state.picked.lng) - Number(lng)) < 0.00001;
+}
+
+function setPickedLocation(lat, lng, options = {}) {
+  const parsedLat = Number(lat), parsedLng = Number(lng);
+  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)
+      || parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) {
+    toast('定位结果的经纬度无效，请改用地图选点', true);
+    return false;
+  }
+  state.picked = {
+    lat: parsedLat,
+    lng: parsedLng,
+    address: options.address || '',
+    source: options.source || 'map',
+  };
+  document.getElementById('lat').value = parsedLat.toFixed(6);
+  document.getElementById('lng').value = parsedLng.toFixed(6);
+  if (options.city) {
+    state.currentCity = options.city;
+    document.getElementById('cityInput').value = options.city;
+  }
+  updatePickedStatus();
+  drawAll(false);
+  if (state.map && options.center !== false) state.map.setZoomAndCenter(16, [parsedLng, parsedLat]);
+  return true;
+}
+
+function switchMapCity() {
+  const city = document.getElementById('cityInput').value.trim();
+  const status = document.getElementById('locationStatus');
+  if (!city) return toast('请输入要查看的城市名称', true);
+  state.currentCity = city;
+  localStorage.setItem('preferredMapCity', city);
+  if (!state.map) {
+    status.textContent = `已记住城市“${city}”；高德地图加载后将自动切换。`;
+    return toast('城市已保存；当前为降级地图，加载高德地图后生效');
+  }
+  status.textContent = `正在切换到${city}…`;
+  try {
+    state.map.setCity(city, () => {
+      status.textContent = `当前地图城市：${city}。仍可点击“定位到我”回到本地位置。`;
+    });
+  } catch (e) {
+    status.textContent = `无法切换到“${city}”，请检查城市名称。`;
+    toast(status.textContent, true);
+  }
+}
+
+function locateMe() {
+  const button = document.getElementById('locateButton');
+  const status = document.getElementById('locationStatus');
+  if (!navigator.geolocation && !(window.AMap && state.map)) {
+    return toast('当前浏览器不支持定位，请手动选择城市或在地图上选点', true);
+  }
+  button.disabled = true;
+  status.textContent = '正在请求浏览器定位权限…';
+
+  const finish = () => { button.disabled = false; };
+  if (window.AMap && state.map) {
+    AMap.plugin('AMap.Geolocation', () => {
+      const geolocation = new AMap.Geolocation({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        convert: true,
+        showButton: false,
+        showMarker: false,
+        showCircle: false,
+        panToLocation: false,
+        zoomToAccuracy: false,
+      });
+      geolocation.getCurrentPosition((resultStatus, result) => {
+        finish();
+        if (resultStatus === 'complete' && result?.position) {
+          const city = result.addressComponent?.city || result.addressComponent?.province || '';
+          const address = result.formattedAddress || '';
+          setPickedLocation(result.position.getLat(), result.position.getLng(), {
+            city, address, source: 'geolocation',
+          });
+          status.textContent = `定位成功${city ? `：${city}` : ''}${address ? ` · ${address}` : ''}。红色标记可作为出发点，也可继续手动选点。`;
+          toast('已定位并填入经纬度，请确认红色标记后提交出发点');
+          return;
+        }
+        const message = result?.message || result?.info || '定位失败或权限被拒绝';
+        status.textContent = `定位失败：${message}。请允许定位权限，或手动选择城市和地图位置。`;
+        toast(status.textContent, true);
+      });
+    });
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(position => {
+    finish();
+    setPickedLocation(position.coords.latitude, position.coords.longitude, {
+      source: 'browser-geolocation',
+    });
+    status.textContent = '已取得浏览器原始定位。当前未加载高德地图，坐标可能有偏差，请配置地图后核对。';
+    toast(status.textContent, true);
+  }, error => {
+    finish();
+    const messages = { 1: '定位权限被拒绝', 2: '无法取得当前位置', 3: '定位请求超时' };
+    status.textContent = `${messages[error.code] || '定位失败'}，请手动选择城市或在地图上选点。`;
+    toast(status.textContent, true);
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+}
+
+async function searchPlaces() {
+  const city = document.getElementById('cityInput').value.trim();
+  const keywords = document.getElementById('placeKeywords').value.trim();
+  const resultsEl = document.getElementById('placeSearchResults');
+  if (!city) return toast('请先输入、选择或定位当前城市', true);
+  if (!keywords) return toast('请输入地址或地点名称', true);
+  resultsEl.innerHTML = '<div class="log">正在搜索城市内的地点…</div>';
+  try {
+    const result = await api(`/api/places/search?city=${encodeURIComponent(city)}&keywords=${encodeURIComponent(keywords)}&limit=10`);
+    state.placeSearchResults = result.results || [];
+    renderPlaceSearchResults();
+    if (!state.placeSearchResults.length) toast(`在${city}没有找到匹配地点，请补充区县、道路或入口名称`, true);
+  } catch (e) {
+    state.placeSearchResults = [];
+    resultsEl.innerHTML = `<div class="err">${escapeHtml(e.message)}</div>`;
+    toast(e.message, true);
+  }
+}
+
+function renderPlaceSearchResults() {
+  const el = document.getElementById('placeSearchResults');
+  if (!state.placeSearchResults.length) {
+    el.innerHTML = '<div class="log">没有搜索结果</div>';
+    return;
+  }
+  el.innerHTML = state.placeSearchResults.map((place, index) => {
+    const area = [place.city, place.district, place.address].filter(Boolean).join(' · ');
+    return `<div class="destination-card">
+      <div class="destination-title">${escapeHtml(place.name)}</div>
+      <div class="muted">${escapeHtml(area || '暂无详细地址')}</div>
+      ${place.category ? `<div class="muted">${escapeHtml(place.category)}</div>` : ''}
+      <div class="destination-actions">
+        <button onclick="confirmPlaceSearchResult(${index})">在地图确认此位置</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function confirmPlaceSearchResult(index) {
+  const place = state.placeSearchResults[index];
+  if (!place) return;
+  const fullAddress = [place.city, place.district, place.address].filter(Boolean).join('');
+  setPickedLocation(place.lat, place.lng, {
+    city: place.city || state.currentCity,
+    address: fullAddress || place.name,
+    source: 'poi-search',
+  });
+  document.getElementById('destinationName').value = place.name || '';
+  document.getElementById('destinationAddress').value = fullAddress || place.name || '';
+  document.getElementById('locationStatus').textContent = `已选择候选地点“${place.name}”。请核对红色标记，再提交出发点或加入想去地点。`;
+  toast('候选位置已标记，并已填入想去地点表单；请确认后再提交');
 }
 
 // ===== WebSocket 实时同步 =====
@@ -654,11 +909,17 @@ async function parseSharedText() {
   if (text.length < 2) return toast('请粘贴包含地点的分享文本', true);
   if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('默认停留时间应为 5～720 分钟', true);
   try {
-    const result = await api(`/trips/${state.tripId}/shared-text/parse`, 'POST', { text, default_stay_min: stay });
+    const result = await api(`/trips/${state.tripId}/shared-text/parse`, 'POST', {
+      text, default_stay_min: stay,
+      use_llm: document.getElementById('useLlmParser').checked,
+    });
     state.importedCandidates = result.candidates || [];
     renderSharedTextResults();
     (result.warnings || []).forEach(message => toast(message, true));
-    if (state.importedCandidates.length) toast(`识别到 ${state.importedCandidates.length} 个地点，请确认后加入`);
+    if (state.importedCandidates.length) {
+      const source = result.llm_used ? '（AI 增强已使用）' : '';
+      toast(`识别到 ${state.importedCandidates.length} 个地点${source}，请确认后加入`);
+    }
   } catch (e) { toast(e.message, true); }
 }
 
@@ -673,7 +934,7 @@ function renderSharedTextResults() {
       <div class="destination-title">${escapeHtml(item.name)}</div>
       <div class="muted">${escapeHtml(item.address || '未提取到地址')} · 停留 ${Number(item.expected_stay_min)} 分钟</div>
       ${details ? `<div class="muted">${details}</div>` : ''}
-      <div class="${located ? 'log' : 'err'}">${located ? `已定位：${Number(item.lng).toFixed(6)}, ${Number(item.lat).toFixed(6)}` : '无法可靠定位，需要手动地图选点'}</div>
+      <div class="${located ? 'log' : 'err'}">${located ? `已定位：${Number(item.lng).toFixed(6)}, ${Number(item.lat).toFixed(6)}${item.resolution_source === 'amap_share_url' ? '（高德分享位置）' : ''}` : '无法可靠定位，需要手动地图选点'}</div>
       <div class="destination-actions">
         ${located ? `<button onclick="addImportedDestination(${index})">确认并加入地点</button>` : `<button onclick="copyImportedToManual(${index})">转到手动选点</button>`}
       </div>
@@ -801,7 +1062,10 @@ function renderItinerary() {
 async function confirmItinerary(planId) {
   try {
     state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/${planId}/confirm`, 'POST', {});
+    if (state.currentTrip) state.currentTrip.status = 'finished';
     renderItinerary();
+    updateFlowUI();
+    refreshMyTrips();
     toast('最终方案已确认');
   } catch (e) { toast(e.message, true); }
 }
@@ -912,24 +1176,21 @@ function renderResult() {
 }
 
 // ===== 地图 =====
-function saveAmapCfg() {
-  const key = document.getElementById('amapKey').value.trim();
-  const sec = document.getElementById('amapSec').value.trim();
-  localStorage.setItem('amapKey', key);
-  localStorage.setItem('amapSec', sec);
-  toast('已保存，重新加载地图…');
-  loadMap();
-}
-
 async function loadMap() {
-  let key = localStorage.getItem('amapKey') || '';
-  let sec = localStorage.getItem('amapSec') || '';
-  // 优先用后端 /api/config 注入的配置（来自 .env），localStorage 手动填写作为兜底
+  let key = '';
+  let sec = '';
+  // 地图配置统一由后端 .env 注入，前端不再保存或手动填写 Key。
   try {
     const cfg = await fetch('/api/config').then(r => r.json());
     if (cfg.amap_js_key) key = cfg.amap_js_key;
     if (cfg.amap_js_security_code) sec = cfg.amap_js_security_code;
-  } catch (e) { /* 后端未返回配置时回退 localStorage */ }
+    const llmToggle = document.getElementById('useLlmParser');
+    const llmLabel = document.getElementById('llmParserLabel');
+    llmToggle.disabled = !cfg.llm_parser_available;
+    llmLabel.lastChild.textContent = cfg.llm_parser_available
+      ? ' AI 增强解析（可选，调用可能产生费用）'
+      : ' AI 增强解析（服务端未配置）';
+  } catch (e) { /* 下方显示统一的未配置提示 */ }
   const tip = document.getElementById('mapTip');
   const mapEl = document.getElementById('map');
   const canvas = document.getElementById('fallback');
@@ -938,7 +1199,7 @@ async function loadMap() {
     mapEl.style.display = 'none';
     canvas.style.display = 'block';
     tip.style.display = 'block';
-    tip.textContent = '未配置高德 JS Key，当前用降级散点图。点击图上任意位置即可选出发点（红点标记），再点左侧「提交」。';
+    tip.textContent = '服务端未配置高德 JS Key，当前使用降级散点图。请在项目 .env 中配置 AMAP_JS_KEY 和 AMAP_JS_SECURITY_CODE 后重启服务。';
     if (!canvas._bound) {
       canvas._bound = true;
       canvas.onclick = e => {
@@ -948,11 +1209,7 @@ async function loadMap() {
         const prj = fbProject(state.fbBounds, canvas);
         // 跳过边缘留白区（pad 内不做反算）
         if (x < 40 || y < 40 || x > canvas.width - 40 || y > canvas.height - 40) return;
-        state.picked = { lat: prj.unprojectY(y), lng: prj.unprojectX(x) };
-        document.getElementById('lat').value = state.picked.lat.toFixed(5);
-        document.getElementById('lng').value = state.picked.lng.toFixed(5);
-        updatePickedStatus();
-        drawFallback();
+        setPickedLocation(prj.unprojectY(y), prj.unprojectX(x), { source: 'map', center: false });
       };
     }
     drawFallback();
@@ -973,13 +1230,10 @@ function initMap() {
   state.map = new AMap.Map('map', { zoom: 12, center: [116.40, 39.90] });
   state.map.on('click', e => {
     const lng = e.lnglat.getLng(), lat = e.lnglat.getLat();
-    state.picked = { lat, lng };
-    document.getElementById('lat').value = lat.toFixed(5);
-    document.getElementById('lng').value = lng.toFixed(5);
-    updatePickedStatus();
     // 只更新红色选点标记，不自动调整视野，避免地图跳回中心。
-    drawAll(false);
+    setPickedLocation(lat, lng, { source: 'map', center: false });
   });
+  if (state.currentCity) state.map.setCity(state.currentCity);
   drawAll();
 }
 
@@ -1185,7 +1439,7 @@ function updatePickedStatus() {
   const el = document.getElementById('pickedStatus');
   if (!el) return;
   el.textContent = state.picked
-    ? `当前选点：纬度 ${state.picked.lat.toFixed(6)}，经度 ${state.picked.lng.toFixed(6)}（地图红色标记）`
+    ? `当前选点：纬度 ${state.picked.lat.toFixed(6)}，经度 ${state.picked.lng.toFixed(6)}${state.picked.address ? ` · ${state.picked.address}` : ''}（地图红色标记）`
     : '尚未选择地图位置';
   el.style.color = state.picked ? '#d4380d' : '#8a919c';
 }
@@ -1202,8 +1456,8 @@ function toast(msg, isErr = false) {
 // ===== 启动 =====
 renderUser();
 updatePickedStatus();
-document.getElementById('amapKey').value = localStorage.getItem('amapKey') || '';
-document.getElementById('amapSec').value = localStorage.getItem('amapSec') || '';
+state.currentCity = localStorage.getItem('preferredMapCity') || '';
+document.getElementById('cityInput').value = state.currentCity;
 loadMap();
 </script>
 </body>
