@@ -306,6 +306,22 @@ class SharedTextTests(unittest.TestCase):
 
 
 class LlmPlaceParserTests(unittest.TestCase):
+    def test_anthropic_protocol_is_detected_and_text_blocks_are_joined(self):
+        parser = LlmPlaceParser()
+        parser.base_url = "https://api.deepseek.com/anthropic"
+        self.assertEqual(parser._api_style(), "anthropic")
+        content = parser._extract_content(
+            {"content": [{"type": "text", "text": "{\"places\":"}, {"type": "text", "text": "[]}"}]},
+            "anthropic",
+        )
+        self.assertEqual(content, '{"places":[]}')
+
+    def test_openai_response_content_is_supported(self):
+        content = LlmPlaceParser._extract_content(
+            {"choices": [{"message": {"content": '{"places":[]}'}}]}, "openai"
+        )
+        self.assertEqual(content, '{"places":[]}')
+
     def test_valid_fenced_json_is_schema_validated(self):
         places = LlmPlaceParser.parse_json_content(
             '```json\n{"places":[{"name":"岳麓山南门","address":"长沙市岳麓区登高路",'

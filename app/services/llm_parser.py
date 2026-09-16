@@ -67,23 +67,47 @@ class LlmPlaceParser:
             + text[:6000]
         )
         try:
-            response = await self._http_client().post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json={
+            if self._api_style() == "anthropic":
+                url = f"{self.base_url}/v1/messages"
+                headers = {
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                }
+                payload = {
                     "model": self.model,
+                    "max_tokens": 2048,
                     "temperature": 0,
+                    "system": "你是地点信息结构化提取器，只返回合法JSON。",
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+            else:
+                url = f"{self.base_url}/chat/completions"
+                headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": self.model, "temperature": 0,
                     "messages": [
                         {"role": "system", "content": "你是地点信息结构化提取器，只返回合法JSON。"},
                         {"role": "user", "content": prompt},
                     ],
-                },
-            )
+                }
+            response = await self._http_client().post(url, headers=headers, json=payload)
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            content = self._extract_content(response.json(), self._api_style())
             return self.parse_json_content(content), None
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
             return [], f"LLM 解析失败：{type(exc).__name__}"
+
+    def _api_style(self) -> str:
+        """DeepSeek 等服务把 Anthropic 兼容入口放在 /anthropic 路径下。"""
+        return "anthropic" if "/anthropic" in self.base_url.lower().split("?")[0] else "openai"
+
+    @staticmethod
+    def _extract_content(payload: dict, api_style: str) -> str:
+        if api_style == "anthropic":
+            blocks = payload["content"]
+            return "".join(str(block.get("text", "")) for block in blocks if block.get("type") == "text")
+        return payload["choices"][0]["message"]["content"]
 
 
 llm_place_parser = LlmPlaceParser()

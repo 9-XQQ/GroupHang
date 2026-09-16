@@ -55,8 +55,10 @@ async def parse_text(
             "resolution_error": None, "resolution_source": "amap_share_url",
         })
 
-    text_candidates = list(result["candidates"])
-    for candidate in llm_candidates:
+    # LLM 成功时采用其文本候选，避免规则把整句自然语言误合并成额外地点；
+    # 高德链接候选在上方独立保留。LLM 失败或未启用时仍完整回退规则解析。
+    text_candidates = [] if llm_used else list(result["candidates"])
+    for candidate in llm_candidates if llm_used else []:
         text_candidates.append({
             **candidate,
             "expected_stay_min": body.default_stay_min,
