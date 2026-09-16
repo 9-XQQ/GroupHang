@@ -1,7 +1,7 @@
 """ORM 模型（Phase 1 子集）。坐标用普通数值/JSONB 字段，暂不引入 PostGIS。"""
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, SmallInteger, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -28,13 +28,17 @@ class Trip(Base):
     title: Mapped[str] = mapped_column(String(100))
     creator_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     invite_code: Mapped[str] = mapped_column(String(8), unique=True)
-    status: Mapped[str] = mapped_column(String(20), default="active")  # active | finished
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | confirmed | completed
     default_mode: Mapped[str] = mapped_column(String(20), default="transit")  # driving | transit
     group_transport_mode: Mapped[str] = mapped_column(String(20), default="transit")
     planned_start_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     planned_end_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     optimization_objective: Mapped[str] = mapped_column(String(20), default="balanced")
     input_version: Mapped[int] = mapped_column(Integer, default=1)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
 
@@ -118,3 +122,27 @@ class ItineraryPlan(Base):
     total_duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="draft")
     computed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class DestinationFeedback(Base):
+    __tablename__ = "destination_feedback"
+    __table_args__ = (
+        UniqueConstraint("trip_id", "destination_id", "user_id", name="uq_destination_feedback_user"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"), index=True)
+    destination_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("trip_destinations.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    visited: Mapped[bool] = mapped_column(Boolean, default=True)
+    rating: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    actual_stay_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tags: Mapped[list] = mapped_column(JSONB, default=list)
+    comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    would_revisit: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

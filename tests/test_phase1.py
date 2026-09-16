@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.schemas import DestinationCreate, Location, LoginRequest, ParticipantUpdate, VoteRequest
+from app.schemas import DestinationCreate, DestinationFeedbackUpdate, Location, LoginRequest, ParticipantUpdate, VoteRequest
 from app.models import TripVote
 from app.routers.votes import aggregate_votes
 from app.services import itinerary, meeting_point
@@ -283,6 +283,19 @@ class SchemaTests(unittest.TestCase):
                 available_from=start, available_until=start,
             )
 
+    def test_destination_feedback_fields_and_tag_whitelist(self):
+        feedback = DestinationFeedbackUpdate(
+            rating=5, actual_stay_min=90, tags=["值得再去", "交通方便"],
+            comment="体验很好", would_revisit=True,
+        )
+        self.assertEqual(feedback.rating, 5)
+        with self.assertRaises(ValidationError):
+            DestinationFeedbackUpdate(rating=6)
+        with self.assertRaises(ValidationError):
+            DestinationFeedbackUpdate(tags=["自定义标签"])
+        with self.assertRaises(ValidationError):
+            DestinationFeedbackUpdate(tags=["值得再去", "值得再去"])
+
 
 class SharedTextTests(unittest.TestCase):
     def test_parses_labeled_place_and_source_url(self):
@@ -370,10 +383,17 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(await require_trip_member(db, 1, SimpleNamespace(id=1)), participant)
 
     async def test_confirmed_trip_rejects_mutation(self):
-        db = _FakeDb(trip=SimpleNamespace(status="finished"), participant=None)
+        db = _FakeDb(trip=SimpleNamespace(status="confirmed"), participant=None)
         with self.assertRaises(HTTPException) as caught:
             await require_trip_active(db, 1)
         self.assertEqual(caught.exception.status_code, 409)
+
+    async def test_completed_trip_rejects_mutation_with_specific_message(self):
+        db = _FakeDb(trip=SimpleNamespace(status="completed"), participant=None)
+        with self.assertRaises(HTTPException) as caught:
+            await require_trip_active(db, 1)
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIn("已完成", caught.exception.detail)
 
     async def test_active_trip_allows_mutation(self):
         trip = SimpleNamespace(status="active")

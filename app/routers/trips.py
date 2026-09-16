@@ -1,13 +1,14 @@
 """Trip 路由：创建、加入、查看详情。"""
 import secrets
 import string
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
-from ..models import MeetingPointResult, Trip, TripParticipant, User
+from ..models import ItineraryPlan, MeetingPointResult, Trip, TripParticipant, User
 from ..schemas import JoinRequest, TripCreate
 from ..security import get_current_user
 from ..services.access import require_trip_member
@@ -23,20 +24,27 @@ def _gen_code(length: int = 6) -> str:
 
 @router.get("")
 async def list_my_trips(
+    trip_status: Literal["active", "confirmed", "completed"] | None = Query(
+        default=None, alias="status"
+    ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """列出当前账号创建或加入过的行程，由用户决定是否恢复。"""
-    result = await db.execute(
+    statement = (
         select(Trip, TripParticipant)
         .join(TripParticipant, TripParticipant.trip_id == Trip.id)
         .where(TripParticipant.user_id == user.id)
         .order_by(Trip.created_at.desc(), Trip.id.desc())
     )
+    if trip_status is not None:
+        statement = statement.where(Trip.status == trip_status)
+    result = await db.execute(statement)
     return {"trips": [{
         "trip_id": trip.id, "title": trip.title, "status": trip.status,
         "role": participant.role, "invite_code": trip.invite_code,
         "planned_start_at": trip.planned_start_at, "planned_end_at": trip.planned_end_at,
+        "completed_at": trip.completed_at, "completed_by": trip.completed_by,
         "joined_at": participant.joined_at, "created_at": trip.created_at,
     } for trip, participant in result.all()]}
 
@@ -162,6 +170,8 @@ async def get_trip(
         "trip_id": trip.id,
         "title": trip.title,
         "status": trip.status,
+        "completed_at": trip.completed_at,
+        "completed_by": trip.completed_by,
         "my_role": next((p.role for p in parts if p.user_id == user.id), "member"),
         "invite_code": trip.invite_code if trip.creator_id == user.id else None,
         "default_mode": trip.default_mode,
@@ -181,6 +191,8 @@ async def reopen_trip(
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以重新编辑 trip")
     trip = await db.get(Trip, trip_id)
+    if trip.status == "completed":
+        raise HTTPException(status_code=409, detail="已完成 trip 不可重新编辑；如需复用请新建 trip")
     if trip.status == "active":
         return {"trip_id": trip.id, "status": trip.status, "input_version": trip.input_version}
     trip.status = "active"
@@ -188,6 +200,41 @@ async def reopen_trip(
     await db.commit()
     await manager.broadcast(trip_id, {"type": "trip_reopened", "trip_id": trip_id, "input_version": trip.input_version})
     return {"trip_id": trip.id, "status": trip.status, "input_version": trip.input_version}
+
+
+@router.post("/{trip_id}/complete")
+async def complete_trip(
+    trip_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    participant = await require_trip_member(db, trip_id, user)
+    if participant.role != "creator":
+        raise HTTPException(status_code=403, detail="只有发起人可以标记 trip 已完成")
+    trip = await db.get(Trip, trip_id)
+    if trip.status != "confirmed":
+        raise HTTPException(status_code=409, detail="只有已确认最终路线的 trip 可以标记完成")
+    result = await db.execute(
+        select(ItineraryPlan).where(
+            ItineraryPlan.trip_id == trip_id,
+            ItineraryPlan.input_version == trip.input_version,
+            ItineraryPlan.status == "confirmed",
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=409, detail="当前版本不存在已确认路线，无法标记完成")
+    trip.status = "completed"
+    trip.completed_at = func.now()
+    trip.completed_by = user.id
+    await db.commit()
+    await db.refresh(trip)
+    await manager.broadcast(trip_id, {"type": "trip_completed", "trip_id": trip_id})
+    return {
+        "trip_id": trip.id,
+        "status": trip.status,
+        "completed_at": trip.completed_at,
+        "completed_by": trip.completed_by,
+    }
 
 
 @router.delete("/{trip_id}", status_code=status.HTTP_204_NO_CONTENT)

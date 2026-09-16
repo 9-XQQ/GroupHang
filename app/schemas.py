@@ -2,7 +2,13 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+FEEDBACK_TAGS = {
+    "值得再去", "人多拥挤", "交通方便", "交通不便", "停留太短",
+    "停留太长", "适合拍照", "适合亲子", "性价比高",
+}
 
 
 class Location(BaseModel):
@@ -112,3 +118,24 @@ class PlanningSettingsUpdate(BaseModel):
         if (self.planned_end_at - self.planned_start_at).total_seconds() > 24 * 3600:
             raise ValueError("单次行程时间不能超过 24 小时")
         return self
+
+
+class DestinationFeedbackUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    visited: bool = True
+    rating: int | None = Field(default=None, ge=1, le=5)
+    actual_stay_min: int | None = Field(default=None, ge=0, le=1440)
+    tags: list[str] = Field(default_factory=list, max_length=9)
+    comment: str | None = Field(default=None, max_length=500)
+    would_revisit: bool | None = None
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, tags: list[str]) -> list[str]:
+        if len(tags) != len(set(tags)):
+            raise ValueError("评价标签不能重复")
+        invalid = set(tags) - FEEDBACK_TAGS
+        if invalid:
+            raise ValueError(f"不支持的评价标签：{sorted(invalid)}")
+        return tags

@@ -30,5 +30,7 @@ async def require_trip_active(db: AsyncSession, trip_id: int) -> Trip:
     if trip is None:
         raise HTTPException(status_code=404, detail="trip 不存在")
     if trip.status != "active":
+        if trip.status == "completed":
+            raise HTTPException(status_code=409, detail="trip 已完成，历史记录不可修改")
         raise HTTPException(status_code=409, detail="trip 已确认锁定，请由发起人点击“重新编辑”后再修改")
     return trip

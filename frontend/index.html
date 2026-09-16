@@ -173,12 +173,19 @@
         <button onclick="doJoinTrip()">加入</button>
       </div>
       <div class="row" style="margin-top:6px">
+        <select id="tripStatusFilter" onchange="refreshMyTrips()" style="width:110px">
+          <option value="">全部状态</option>
+          <option value="active">规划中</option>
+          <option value="confirmed">已确认</option>
+          <option value="completed">已完成</option>
+        </select>
         <select id="myTripSelect" style="flex:1"><option value="">登录后加载我的 trip</option></select>
         <button class="secondary" onclick="openSelectedTrip()">打开</button>
       </div>
       <div class="log" id="tripInfo"></div>
       <div class="row" id="tripManage" style="display:none;margin-top:6px">
         <button id="reopenTripButton" class="secondary" onclick="reopenCurrentTrip()" style="display:none;flex:1">重新编辑</button>
+        <button id="completeTripButton" onclick="completeCurrentTrip()" style="display:none;flex:1">标记已完成</button>
         <button class="secondary" onclick="deleteCurrentTrip()" style="flex:1;color:#d4380d">删除当前 trip</button>
       </div>
     </div>
@@ -300,6 +307,7 @@ const state = {
   tripId: null,
   candidates: [],
   destinations: [],
+  feedbackByDestination: {},
   myTrips: [],
   importedCandidates: [],
   itinerary: null,
@@ -398,12 +406,16 @@ function updateFlowUI() {
   document.getElementById('loginStep').classList.toggle('flow-hidden', Boolean(state.user));
   document.getElementById('meetingModeButton').classList.toggle('active', state.workflowMode === 'meeting');
   document.getElementById('routeModeButton').classList.toggle('active', state.workflowMode === 'route');
-  const locked = state.currentTrip?.status === 'finished';
+  const tripStatus = state.currentTrip?.status;
+  const locked = tripStatus === 'confirmed' || tripStatus === 'completed';
   document.getElementById('tripLockStatus').textContent = locked
-    ? '🔒 最终路线已确认，当前 trip 为只读。发起人可点击“重新编辑”。'
+    ? (tripStatus === 'completed'
+      ? '🔒 行程已完成，历史规划永久只读。'
+      : '🔒 最终路线已确认，当前 trip 为只读。发起人可重新编辑或标记已完成。')
     : (state.tripId ? '请选择一种规划方式继续。' : '');
   document.getElementById('tripManage').style.display = state.currentTrip?.my_role === 'creator' ? 'flex' : 'none';
-  document.getElementById('reopenTripButton').style.display = locked ? 'block' : 'none';
+  document.getElementById('reopenTripButton').style.display = tripStatus === 'confirmed' ? 'block' : 'none';
+  document.getElementById('completeTripButton').style.display = tripStatus === 'confirmed' ? 'block' : 'none';
 }
 
 function chooseWorkflow(mode) {
@@ -417,6 +429,7 @@ function clearTripState() {
   state.participants = [];
   state.candidates = [];
   state.destinations = [];
+  state.feedbackByDestination = {};
   state.importedCandidates = [];
   state.itinerary = null;
   state.votes = {};
@@ -459,10 +472,12 @@ async function refreshMyTrips() {
     return;
   }
   try {
-    const result = await api('/trips');
+    const status = document.getElementById('tripStatusFilter')?.value || '';
+    const result = await api(`/trips${status ? `?status=${encodeURIComponent(status)}` : ''}`);
     state.myTrips = result.trips || [];
+    const statusLabels = { active: '规划中', confirmed: '已确认', completed: '已完成' };
     select.innerHTML = '<option value="">选择创建或加入过的 trip</option>' + state.myTrips.map(item =>
-      `<option value="${Number(item.trip_id)}">#${Number(item.trip_id)} ${escapeHtml(item.title)}（${item.role === 'creator' ? '我创建的' : '我加入的'} / ${item.status === 'finished' ? '已确认' : '规划中'}）</option>`
+      `<option value="${Number(item.trip_id)}">#${Number(item.trip_id)} ${escapeHtml(item.title)}（${item.role === 'creator' ? '我创建的' : '我加入的'} / ${statusLabels[item.status] || escapeHtml(item.status)}）</option>`
     ).join('');
   } catch (e) { toast(e.message, true); }
 }
@@ -480,11 +495,12 @@ async function openTrip(tripId) {
   clearTripState();
   state.tripId = Number(tripId);
   state.currentTrip = trip;
-  const statusText = trip.status === 'finished' ? '已确认' : '规划中';
+  const statusText = ({ active: '规划中', confirmed: '已确认', completed: '已完成' })[trip.status] || trip.status;
   document.getElementById('tripInfo').innerHTML = `trip #${Number(tripId)}：${escapeHtml(trip.title)} · ${statusText}`
     + (trip.invite_code ? `<br>邀请码：<b>${escapeHtml(trip.invite_code)}</b>（可复制给参与者）` : '');
   updateFlowUI();
   await Promise.all([refreshParticipants(), refreshDestinations(), fetchLatestItinerary()]);
+  if (trip.status === 'completed') await refreshFeedback();
   connectWS();
   toast(`已打开 trip #${tripId}`);
 }
@@ -518,6 +534,17 @@ async function reopenCurrentTrip() {
     await refreshMyTrips();
     await openTrip(state.tripId);
     toast('trip 已重新开启，可以修改并重新规划');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function completeCurrentTrip() {
+  if (!state.tripId || state.currentTrip?.status !== 'confirmed') return;
+  if (!confirm('确认本次行程已经实际完成吗？完成后规划和地点将永久只读。')) return;
+  try {
+    await api(`/trips/${state.tripId}/complete`, 'POST', {});
+    await refreshMyTrips();
+    await openTrip(state.tripId);
+    toast('trip 已标记为完成');
   } catch (e) { toast(e.message, true); }
 }
 
@@ -767,9 +794,11 @@ function connectWS() {
       if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
       refreshDestinations();
     } else if (msg.type === 'destination_votes_updated') refreshDestinations();
+    else if (msg.type === 'destination_feedback_updated') refreshFeedback();
     else if (msg.type === 'planning_settings_updated') {
       if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
     } else if (msg.type === 'itinerary_ready' || msg.type === 'itinerary_confirmed') fetchLatestItinerary();
+    else if (msg.type === 'trip_completed') openTrip(state.tripId);
   };
   ws.onclose = () => {
     if (state.ws === ws) state.ws = null;
@@ -874,28 +903,86 @@ async function editDestinationStay(id, currentValue) {
   } catch (e) { toast(e.message, true); }
 }
 
+async function refreshFeedback() {
+  if (!state.tripId || state.currentTrip?.status !== 'completed') return;
+  try {
+    const result = await api(`/trips/${state.tripId}/feedback`);
+    state.feedbackByDestination = Object.fromEntries(
+      (result.destinations || []).map(item => [item.destination_id, item])
+    );
+    renderDestinations();
+  } catch (e) { console.error('[refreshFeedback] 失败:', e); }
+}
+
+async function editMyFeedback(destinationId) {
+  const existing = state.feedbackByDestination[destinationId]?.my_feedback || {};
+  const ratingRaw = prompt('评分（1～5，留空表示不评分）', existing.rating ?? '');
+  if (ratingRaw === null) return;
+  const rating = ratingRaw.trim() === '' ? null : Number(ratingRaw);
+  if (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 5)) {
+    return toast('评分应为 1～5 的整数', true);
+  }
+  const stayRaw = prompt('实际停留分钟数（0～1440，留空表示未知）', existing.actual_stay_min ?? '');
+  if (stayRaw === null) return;
+  const actualStay = stayRaw.trim() === '' ? null : Number(stayRaw);
+  if (actualStay !== null && (!Number.isInteger(actualStay) || actualStay < 0 || actualStay > 1440)) {
+    return toast('实际停留时间应为 0～1440 分钟', true);
+  }
+  const allowedTags = ['值得再去','人多拥挤','交通方便','交通不便','停留太短','停留太长','适合拍照','适合亲子','性价比高'];
+  const tagsRaw = prompt(`标签用逗号分隔，可选：${allowedTags.join('、')}`, (existing.tags || []).join(','));
+  if (tagsRaw === null) return;
+  const tags = [...new Set(tagsRaw.split(/[,，]/).map(value => value.trim()).filter(Boolean))];
+  if (tags.some(tag => !allowedTags.includes(tag))) return toast('包含不支持的评价标签', true);
+  const comment = prompt('我的评价（最多500字，仅自己可查看文字）', existing.comment || '');
+  if (comment === null) return;
+  if (comment.length > 500) return toast('评价不能超过500字', true);
+  const revisitRaw = prompt('是否愿意再访？输入 是 / 否，留空表示不确定', existing.would_revisit === true ? '是' : existing.would_revisit === false ? '否' : '');
+  if (revisitRaw === null) return;
+  const revisitText = revisitRaw.trim();
+  if (revisitText && !['是', '否'].includes(revisitText)) return toast('再访意愿请输入“是”或“否”', true);
+  try {
+    await api(`/trips/${state.tripId}/destinations/${destinationId}/feedback/me`, 'PUT', {
+      visited: true, rating, actual_stay_min: actualStay, tags,
+      comment: comment.trim() || null,
+      would_revisit: revisitText ? revisitText === '是' : null,
+    });
+    await refreshFeedback();
+    toast('我的地点评价已保存');
+  } catch (e) { toast(e.message, true); }
+}
+
 function renderDestinations() {
   const el = document.getElementById('destinationList');
   if (!el) return;
   if (!state.destinations.length) { el.innerHTML = '<div class="log">还没有想去地点</div>'; return; }
   const me = state.participants.find(p => p.user_id === state.user?.id);
   const isCreator = me?.role === 'creator';
+  const isActive = state.currentTrip?.status === 'active';
+  const isCompleted = state.currentTrip?.status === 'completed';
   const labels = { candidate: '候选', must_visit: '必去', optional: '可选', excluded: '本次不去' };
   el.innerHTML = state.destinations.map(d => {
     const vote = d.votes || { up: 0, down: 0, my_vote: 0 };
-    const canDelete = d.visit_status === 'candidate' && (isCreator || d.submitted_by.user_id === state.user?.id);
-    const canEdit = isCreator || d.submitted_by.user_id === state.user?.id;
-    const statusControl = isCreator ? `<select onchange="setDestinationStatus(${Number(d.id)}, this.value)">
+    const canDelete = isActive && d.visit_status === 'candidate' && (isCreator || d.submitted_by.user_id === state.user?.id);
+    const canEdit = isActive && (isCreator || d.submitted_by.user_id === state.user?.id);
+    const statusControl = isActive && isCreator ? `<select onchange="setDestinationStatus(${Number(d.id)}, this.value)">
       ${Object.entries(labels).map(([value, label]) => `<option value="${value}" ${d.visit_status === value ? 'selected' : ''}>${label}</option>`).join('')}
     </select>` : `<span class="tag">${labels[d.visit_status] || escapeHtml(d.visit_status)}</span>`;
+    const feedback = state.feedbackByDestination[d.id];
+    const summary = feedback?.summary;
+    const mine = feedback?.my_feedback;
+    const feedbackHtml = isCompleted ? `<div class="muted" style="margin-top:6px">${summary?.rating_count
+      ? `成员评分 ${Number(summary.average_rating).toFixed(1)} / 5（${Number(summary.rating_count)}人）`
+      : '暂无成员评分'}${mine ? ` · 我的评分 ${mine.rating ?? '未评分'}${mine.comment ? ` · ${escapeHtml(mine.comment)}` : ''}` : ''}</div>
+      <button class="vote-btn" onclick="editMyFeedback(${Number(d.id)})">${mine ? '修改我的评价' : '评价这个地点'}</button>` : '';
     return `<div class="destination-card">
       <div class="destination-title"><span>📌 ${escapeHtml(d.name)}</span>${statusControl}</div>
       <div class="muted">${escapeHtml(d.address || '地图选点')} · 停留 ${Number(d.expected_stay_min)} 分钟 · ${escapeHtml(d.submitted_by.name)} 添加</div>
       <div class="destination-actions">
-        <button class="vote-btn ${vote.my_vote === 1 ? 'active-up' : ''}" onclick="voteDestination(${Number(d.id)}, 1)">👍 ${vote.up}</button>
-        <button class="vote-btn ${vote.my_vote === -1 ? 'active-down' : ''}" onclick="voteDestination(${Number(d.id)}, -1)">👎 ${vote.down}</button>
+        ${isActive ? `<button class="vote-btn ${vote.my_vote === 1 ? 'active-up' : ''}" onclick="voteDestination(${Number(d.id)}, 1)">👍 ${vote.up}</button>
+        <button class="vote-btn ${vote.my_vote === -1 ? 'active-down' : ''}" onclick="voteDestination(${Number(d.id)}, -1)">👎 ${vote.down}</button>` : ''}
         ${canEdit ? `<button class="vote-btn" onclick="editDestinationStay(${Number(d.id)}, ${Number(d.expected_stay_min)})">修改停留时间</button>` : ''}
         ${canDelete ? `<button class="vote-btn" onclick="deleteDestination(${Number(d.id)})">删除</button>` : ''}
+        ${feedbackHtml}
       </div>
     </div>`;
   }).join('');
@@ -1062,7 +1149,7 @@ function renderItinerary() {
 async function confirmItinerary(planId) {
   try {
     state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/${planId}/confirm`, 'POST', {});
-    if (state.currentTrip) state.currentTrip.status = 'finished';
+    if (state.currentTrip) state.currentTrip.status = 'confirmed';
     renderItinerary();
     updateFlowUI();
     refreshMyTrips();

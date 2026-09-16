@@ -159,7 +159,7 @@ async def confirm_plan(
     if trip.status != "active":
         raise HTTPException(status_code=409, detail="trip 已确认锁定")
     plan.status = "confirmed"
-    trip.status = "finished"
+    trip.status = "confirmed"
     await db.commit()
     await db.refresh(plan)
     await manager.broadcast(trip_id, {"type": "itinerary_confirmed", "trip_id": trip_id, "plan_id": plan.id})

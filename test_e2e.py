@@ -275,6 +275,61 @@ def main() -> None:
     )
     print("权限与投票输入校验通过")
 
+    # Phase 4A-1：确认、完成、历史筛选和完成后永久只读。
+    expect_http_error(
+        409, "PUT", f"/trips/{trip_id}/destinations/{destination_a['id']}/feedback/me",
+        {"visited": True, "rating": 5, "tags": []}, token_a,
+    )
+    final_plan = request("POST", f"/trips/{trip_id}/itinerary-plans", {}, token_a)
+    request(
+        "POST", f"/trips/{trip_id}/itinerary-plans/{final_plan['plan_id']}/confirm", {}, token_a
+    )
+    expect_http_error(403, "POST", f"/trips/{trip_id}/complete", {}, token_b)
+    completed = request("POST", f"/trips/{trip_id}/complete", {}, token_a)
+    if completed["status"] != "completed" or not completed.get("completed_at"):
+        raise RuntimeError(f"Phase 4A-1 完成状态写入失败：{completed}")
+    expect_http_error(409, "POST", f"/trips/{trip_id}/reopen", {}, token_a)
+    expect_http_error(
+        409, "PUT", f"/trips/{trip_id}/participants/me",
+        {
+            "start_location": {"lat": 39.9, "lng": 116.4, "address": "不可修改"},
+            "transport_mode": "transit",
+        }, token_a,
+    )
+    completed_trips = request("GET", "/trips?status=completed", token=token_a)["trips"]
+    if not any(item["trip_id"] == trip_id for item in completed_trips):
+        raise RuntimeError("Phase 4A-1 已完成 Trip 未出现在状态筛选结果中")
+    print("Phase 4A-1 生命周期、权限、筛选和永久只读验证通过")
+
+    # Phase 4A-2：成员只能在完成后评价本人反馈，列表只返回聚合与本人的文字。
+    member_feedback = request(
+        "PUT", f"/trips/{trip_id}/destinations/{destination_a['id']}/feedback/me",
+        {
+            "visited": True, "rating": 4, "actual_stay_min": 100,
+            "tags": ["交通方便"], "comment": "成员私密评价", "would_revisit": True,
+        }, token_b,
+    )
+    if member_feedback["my_feedback"]["rating"] != 4:
+        raise RuntimeError("Phase 4A-2 成员反馈保存失败")
+    request(
+        "PUT", f"/trips/{trip_id}/destinations/{destination_a['id']}/feedback/me",
+        {
+            "visited": True, "rating": 5, "actual_stay_min": 120,
+            "tags": ["值得再去", "交通方便"], "comment": "创建者私密评价", "would_revisit": True,
+        }, token_a,
+    )
+    feedback = request("GET", f"/trips/{trip_id}/feedback", token=token_b)
+    destination_feedback = next(
+        item for item in feedback["destinations"] if item["destination_id"] == destination_a["id"]
+    )
+    if destination_feedback["summary"]["average_rating"] != 4.5:
+        raise RuntimeError(f"Phase 4A-2 评分聚合错误：{destination_feedback}")
+    if destination_feedback["my_feedback"]["comment"] != "成员私密评价":
+        raise RuntimeError("Phase 4A-2 未正确返回本人评价")
+    if "创建者私密评价" in str(destination_feedback):
+        raise RuntimeError("Phase 4A-2 泄露了其他成员的文字评价")
+    print("Phase 4A-2 地点评价、聚合与文字隐私验证通过")
+
     # Windows 默认 GBK 控制台无法编码部分 Unicode 符号，保持输出可跨平台执行。
     print("==> 闭环跑通 [OK]")
 
