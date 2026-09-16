@@ -90,6 +90,15 @@ def main() -> None:
         raise RuntimeError("加入后的 trip 未出现在成员的我的 trip 列表")
     print(f"      participant_id={joined['participant_id']}，role={joined['role']}\n")
 
+    # Trip 主方案类型只有创建者可切换，并对所有成员可见。
+    expect_http_error(
+        403, "PUT", f"/trips/{trip_id}/workflow", {"primary_workflow": "meeting"}, token_b
+    )
+    request("PUT", f"/trips/{trip_id}/workflow", {"primary_workflow": "meeting"}, token_a)
+    if request("GET", f"/trips/{trip_id}", token=token_b)["primary_workflow"] != "meeting":
+        raise RuntimeError("Trip 主方案类型未同步给参与者")
+    request("PUT", f"/trips/{trip_id}/workflow", {"primary_workflow": "itinerary"}, token_a)
+
     # Phase 2A：双方添加地点，发起人确认状态，成员投票。
     destination_a = request(
         "POST", f"/trips/{trip_id}/destinations",
@@ -168,7 +177,8 @@ def main() -> None:
     if planned_ids != {destination_a["id"], destination_b["id"]}:
         raise RuntimeError(f"Phase 2B 未覆盖全部确认地点：{planned_ids}")
     confirmed = request(
-        "POST", f"/trips/{trip_id}/itinerary-plans/{itinerary['plan_id']}/confirm", {}, token_a
+        "POST", f"/trips/{trip_id}/itinerary-plans/{itinerary['plan_id']}/confirm",
+        {"accept_estimated_routes": True}, token_a
     )
     if confirmed["status"] != "confirmed":
         raise RuntimeError(f"Phase 2C 方案确认失败：{confirmed}")
@@ -190,7 +200,8 @@ def main() -> None:
         }, token_a,
     )
     expect_http_error(
-        409, "POST", f"/trips/{trip_id}/itinerary-plans/{itinerary['plan_id']}/confirm", {}, token_a
+        409, "POST", f"/trips/{trip_id}/itinerary-plans/{itinerary['plan_id']}/confirm",
+        {"accept_estimated_routes": True}, token_a
     )
     print("      Phase 2B 第一站、完整地点顺序和时间线验证通过\n")
 
@@ -219,6 +230,7 @@ def main() -> None:
 
     # 6. 触发约点推荐
     print("[6/7] 触发约点推荐（minimax 公平优先）...")
+    request("PUT", f"/trips/{trip_id}/workflow", {"primary_workflow": "meeting"}, token_a)
     result = request("POST", f"/trips/{trip_id}/meeting-points", {"objective": "minimax"}, token_a)
     candidates = result["candidates"]
     print(f"      得到 {len(candidates)} 个候选点\n")
@@ -280,9 +292,11 @@ def main() -> None:
         409, "PUT", f"/trips/{trip_id}/destinations/{destination_a['id']}/feedback/me",
         {"visited": True, "rating": 5, "tags": []}, token_a,
     )
+    request("PUT", f"/trips/{trip_id}/workflow", {"primary_workflow": "itinerary"}, token_a)
     final_plan = request("POST", f"/trips/{trip_id}/itinerary-plans", {}, token_a)
     request(
-        "POST", f"/trips/{trip_id}/itinerary-plans/{final_plan['plan_id']}/confirm", {}, token_a
+        "POST", f"/trips/{trip_id}/itinerary-plans/{final_plan['plan_id']}/confirm",
+        {"accept_estimated_routes": True}, token_a
     )
     expect_http_error(403, "POST", f"/trips/{trip_id}/complete", {}, token_b)
     completed = request("POST", f"/trips/{trip_id}/complete", {}, token_a)

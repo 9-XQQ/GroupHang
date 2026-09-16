@@ -1,5 +1,6 @@
 """Phase 3：分享文本解析与地点消歧。"""
 import asyncio
+import re
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,16 @@ from ..services.llm_parser import llm_place_parser
 from ..services.shared_text import parse_shared_text
 
 router = APIRouter(prefix="/trips/{trip_id}/shared-text", tags=["shared-text"])
+
+
+def _infer_city(text: str) -> str:
+    """只提取文本明确给出的城市上下文，不维护硬编码城市表。"""
+    match = re.search(r"(?:在|到|去)([\u4e00-\u9fff]{2,8}?)(?:市)?(?:吃|玩|逛|旅行|旅游|出差)", text)
+    return match.group(1).strip() if match else ""
+
+
+def _normalized_place_name(value: str) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]", "", value.lower())
 
 
 @router.post("/parse")
@@ -66,20 +77,38 @@ async def parse_text(
         })
 
     for candidate in text_candidates:
-        query = candidate["address"] or candidate["name"]
-        location = await amap.geocode(query)
+        city = str(candidate.get("city") or body.preferred_city or _infer_city(body.text)).strip()
+        query = candidate["name"]
+        poi_candidates = await amap.search_pois(query, city, 5) if city else []
+        exact = [
+            place for place in poi_candidates
+            if _normalized_place_name(place["name"]) == _normalized_place_name(candidate["name"])
+        ]
+        # 唯一精确名称可自动定位；其他情况必须让用户从 POI 候选中确认。
+        selected = exact[0] if len(exact) == 1 else None
+        if not poi_candidates and candidate.get("address"):
+            location = await amap.geocode(f"{city}{candidate['address']}" if city else candidate["address"])
+            selected = ({
+                "name": candidate["name"], "address": candidate["address"], "city": city,
+                "district": "", "category": candidate.get("category", ""), **location,
+            } if location else None)
         item = {
             **candidate,
-            "lat": location["lat"] if location else None,
-            "lng": location["lng"] if location else None,
-            "formatted_address": location["formatted"] if location else None,
-            "resolved": bool(location),
-            "resolution_error": None if location else (amap.last_error or "无法确定地点坐标，请补充详细地址"),
-            "resolution_source": "geocode" if location else None,
+            "city": city,
+            "lat": selected["lat"] if selected else None,
+            "lng": selected["lng"] if selected else None,
+            "formatted_address": selected.get("address", "") if selected else None,
+            "resolved": bool(selected),
+            "resolution_error": None if selected else (
+                "找到多个同名或相似地点，请选择具体门店" if poi_candidates
+                else (amap.last_error or "无法确定地点坐标，请补充城市或详细地址")
+            ),
+            "resolution_source": "poi_exact" if selected and poi_candidates else ("geocode" if selected else None),
+            "location_candidates": poi_candidates,
         }
-        duplicate = location and any(
-            abs(float(existing["lat"]) - float(location["lat"])) < 0.00001
-            and abs(float(existing["lng"]) - float(location["lng"])) < 0.00001
+        duplicate = selected and any(
+            abs(float(existing["lat"]) - float(selected["lat"])) < 0.00001
+            and abs(float(existing["lng"]) - float(selected["lng"])) < 0.00001
             for existing in resolved if existing.get("lat") is not None and existing.get("lng") is not None
         )
         if not duplicate:

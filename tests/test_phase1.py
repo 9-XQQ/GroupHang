@@ -6,9 +6,10 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.schemas import DestinationCreate, DestinationFeedbackUpdate, Location, LoginRequest, ParticipantUpdate, VoteRequest
+from app.schemas import DestinationCreate, DestinationFeedbackUpdate, Location, LoginRequest, ParticipantUpdate, SharedTextParseRequest, TripWorkflowUpdate, VoteRequest
 from app.models import TripVote
 from app.routers.votes import aggregate_votes
+from app.routers.shared_text import _infer_city, _normalized_place_name
 from app.services import itinerary, meeting_point
 from app.services.amap import AmapClient
 from app.services.access import require_trip_active, require_trip_member
@@ -57,6 +58,34 @@ class MeetingPointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["candidate_id"], "coord:39.905000,116.405000")
         self.assertEqual(by_user[20]["travel_time_min"], 21)  # 12 分钟驾车 + 9 分钟停车
         self.assertIn("实时路况", by_user[20]["route_summary"])
+        self.assertTrue(by_user[20]["estimated"])
+
+    async def test_top_meeting_candidate_contains_route_steps_and_geometry(self):
+        participants = [
+            {"user_id": 10, "name": "公交用户", "mode": "transit", "lat": 39.90, "lng": 116.40},
+        ]
+        candidate = {
+            "name": "候选点", "address": "", "lat": 39.905, "lng": 116.405,
+            "category": "商圈", "source": "poi",
+        }
+        detail = {
+            "duration_min": 20, "distance_km": 5.2,
+            "polyline": [[116.4, 39.9], [116.405, 39.905]],
+            "steps": [{"type": "transit", "line": "地铁1号线"}],
+        }
+        with patch.object(
+            meeting_point, "generate_candidates", AsyncMock(return_value=[candidate])
+        ), patch.object(
+            meeting_point.amap, "transit_duration", AsyncMock(return_value=20.0)
+        ), patch.object(
+            meeting_point.amap, "route_detail", AsyncMock(return_value=detail)
+        ), patch.object(meeting_point.amap, "available", True):
+            result = await meeting_point.recommend(participants, "minimax")
+
+        route = result[0]["per_person"][0]
+        self.assertFalse(route["estimated"])
+        self.assertEqual(route["steps"][0]["line"], "地铁1号线")
+        self.assertEqual(route["polyline"], detail["polyline"])
 
 
 class ItineraryTests(unittest.IsolatedAsyncioTestCase):
@@ -296,8 +325,22 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             DestinationFeedbackUpdate(tags=["值得再去", "值得再去"])
 
+    def test_trip_primary_workflow_is_limited(self):
+        self.assertEqual(TripWorkflowUpdate(primary_workflow="meeting").primary_workflow, "meeting")
+        with self.assertRaises(ValidationError):
+            TripWorkflowUpdate(primary_workflow="unknown")
+
+    def test_shared_text_preferred_city_is_bounded(self):
+        request = SharedTextParseRequest(text="广州餐厅", preferred_city="广州市")
+        self.assertEqual(request.preferred_city, "广州市")
+
 
 class SharedTextTests(unittest.TestCase):
+    def test_city_context_and_place_name_normalization(self):
+        text = "在广州吃了好多家，第一家是 ginkao bangkok，第二家是美奈小馆。"
+        self.assertEqual(_infer_city(text), "广州")
+        self.assertEqual(_normalized_place_name("Ginkao Bangkok"), "ginkaobangkok")
+
     def test_parses_labeled_place_and_source_url(self):
         result = parse_shared_text(
             "名称：故宫博物院\n地址：北京市东城区景山前街4号\n品类：景点\n"

@@ -196,6 +196,7 @@
         <button id="meetingModeButton" class="secondary" onclick="chooseWorkflow('meeting')" style="flex:1">共同约点</button>
         <button id="routeModeButton" class="secondary" onclick="chooseWorkflow('route')" style="flex:1">多地点路线</button>
       </div>
+      <div class="muted" id="primaryWorkflowStatus"></div>
       <div class="log" id="tripLockStatus"></div>
     </div>
 
@@ -232,7 +233,7 @@
           <option value="minimax">公平优先（最小化最长通勤）</option>
           <option value="min_sum">效率优先（最小化总耗时）</option>
         </select>
-        <button onclick="doRecommend()">生成推荐</button>
+        <button id="recommendButton" onclick="doRecommend()">生成推荐</button>
       </div>
       <div class="log" id="recommendLog"></div>
     </div>
@@ -259,7 +260,7 @@
         <select id="groupMode"><option value="transit">共同公交/步行</option><option value="driving">共同自驾</option></select>
         <select id="planObjective"><option value="balanced">均衡</option><option value="total_time">总时间最短</option><option value="distance">总路线最短</option></select>
       </div>
-      <div class="row"><button onclick="savePlanningSettings()" class="secondary">保存参数</button><button onclick="generateItinerary()" style="flex:1">规划全部地点</button></div>
+      <div class="row"><button id="savePlanButton" onclick="savePlanningSettings()" class="secondary">保存参数</button><button id="generatePlanButton" onclick="generateItinerary()" style="flex:1">规划全部地点</button></div>
       <div class="log" id="planLog"></div>
     </div>
 
@@ -287,11 +288,11 @@
 
 <!-- 底部结果 -->
 <div style="padding:0 16px 16px">
-  <div class="panel" id="resultPanel" style="display:none">
+  <div class="panel" id="resultPanel" data-result-workflow="meeting" style="display:none">
     <h2>推荐结果</h2>
     <div id="resultBody"></div>
   </div>
-  <div class="panel" id="itineraryPanel" style="display:none;margin-top:12px">
+  <div class="panel" id="itineraryPanel" data-result-workflow="route" style="display:none;margin-top:12px">
     <h2>多人多地点路线方案</h2>
     <div class="muted">地图：不同颜色虚线为每位参与者赴约路线，紫色实线为集合后共同路线；标注“估算”的路段为直线降级。</div>
     <div id="itineraryBody"></div>
@@ -406,6 +407,16 @@ function updateFlowUI() {
   document.getElementById('loginStep').classList.toggle('flow-hidden', Boolean(state.user));
   document.getElementById('meetingModeButton').classList.toggle('active', state.workflowMode === 'meeting');
   document.getElementById('routeModeButton').classList.toggle('active', state.workflowMode === 'route');
+  const primary = state.currentTrip?.primary_workflow === 'meeting' ? 'meeting' : 'route';
+  const primaryLabel = primary === 'meeting' ? '共同约点' : '多地点路线';
+  const viewingOther = state.workflowMode && state.workflowMode !== primary;
+  document.getElementById('primaryWorkflowStatus').textContent = state.tripId
+    ? `Trip 当前主方案：${primaryLabel}${viewingOther ? '；你正在只读查看另一方案' : ''}` : '';
+  document.querySelectorAll('[data-workflow] input, [data-workflow] select, [data-workflow] textarea, [data-workflow] button')
+    .forEach(control => { control.disabled = Boolean(viewingOther); });
+  renderResult();
+  renderItinerary();
+  drawAll(false);
   const tripStatus = state.currentTrip?.status;
   const locked = tripStatus === 'confirmed' || tripStatus === 'completed';
   document.getElementById('tripLockStatus').textContent = locked
@@ -418,9 +429,20 @@ function updateFlowUI() {
   document.getElementById('completeTripButton').style.display = tripStatus === 'confirmed' ? 'block' : 'none';
 }
 
-function chooseWorkflow(mode) {
+async function chooseWorkflow(mode) {
+  if (!state.tripId) return;
   state.workflowMode = mode;
   updateFlowUI();
+  if (state.currentTrip?.my_role !== 'creator' || state.currentTrip?.status !== 'active') return;
+  const serverMode = mode === 'meeting' ? 'meeting' : 'itinerary';
+  if (state.currentTrip.primary_workflow === serverMode) return;
+  try {
+    const result = await api(`/trips/${state.tripId}/workflow`, 'PUT', { primary_workflow: serverMode });
+    state.currentTrip.primary_workflow = result.primary_workflow;
+    updateFlowUI();
+    await refreshMyTrips();
+    toast(`Trip 主方案已切换为${mode === 'meeting' ? '共同约点' : '多地点路线'}`);
+  } catch (e) { toast(e.message, true); }
 }
 
 function clearTripState() {
@@ -495,6 +517,7 @@ async function openTrip(tripId) {
   clearTripState();
   state.tripId = Number(tripId);
   state.currentTrip = trip;
+  state.workflowMode = trip.primary_workflow === 'meeting' ? 'meeting' : 'route';
   const statusText = ({ active: '规划中', confirmed: '已确认', completed: '已完成' })[trip.status] || trip.status;
   document.getElementById('tripInfo').innerHTML = `trip #${Number(tripId)}：${escapeHtml(trip.title)} · ${statusText}`
     + (trip.invite_code ? `<br>邀请码：<b>${escapeHtml(trip.invite_code)}</b>（可复制给参与者）` : '');
@@ -788,13 +811,22 @@ function connectWS() {
     try { msg = JSON.parse(ev.data); } catch { return; }
     console.log('[ws] 收到事件:', msg.type);
     if (msg.type === 'participants_updated') refreshParticipants();
-    else if (msg.type === 'meeting_points_ready') fetchMeetingPoints();
+    else if (msg.type === 'meeting_points_ready') {
+      fetchMeetingPoints();
+      if (state.workflowMode !== 'meeting') toast('共同约点有新结果；切换到“共同约点”可查看');
+    }
     else if (msg.type === 'votes_updated') refreshVotes();
     else if (msg.type === 'destinations_updated') {
       if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
       refreshDestinations();
     } else if (msg.type === 'destination_votes_updated') refreshDestinations();
     else if (msg.type === 'destination_feedback_updated') refreshFeedback();
+    else if (msg.type === 'trip_workflow_updated') {
+      state.currentTrip.primary_workflow = msg.primary_workflow;
+      state.workflowMode = msg.primary_workflow === 'meeting' ? 'meeting' : 'route';
+      updateFlowUI();
+      toast(`发起人已将主方案切换为${state.workflowMode === 'meeting' ? '共同约点' : '多地点路线'}`);
+    }
     else if (msg.type === 'planning_settings_updated') {
       if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
     } else if (msg.type === 'itinerary_ready' || msg.type === 'itinerary_confirmed') fetchLatestItinerary();
@@ -999,6 +1031,7 @@ async function parseSharedText() {
     const result = await api(`/trips/${state.tripId}/shared-text/parse`, 'POST', {
       text, default_stay_min: stay,
       use_llm: document.getElementById('useLlmParser').checked,
+      preferred_city: state.currentCity || document.getElementById('cityInput').value.trim() || null,
     });
     state.importedCandidates = result.candidates || [];
     renderSharedTextResults();
@@ -1017,16 +1050,35 @@ function renderSharedTextResults() {
   el.innerHTML = state.importedCandidates.map((item, index) => {
     const located = Number.isFinite(item.lat) && Number.isFinite(item.lng);
     const details = [item.category, item.price, item.reason].filter(Boolean).map(escapeHtml).join(' · ');
+    const locationChoices = (item.location_candidates || []).map((place, placeIndex) =>
+      `<button class="vote-btn" onclick="selectImportedLocation(${index}, ${placeIndex})">${escapeHtml(place.name)} · ${escapeHtml(place.district || place.city || '')} · ${escapeHtml(place.address || '')}</button>`
+    ).join('');
     return `<div class="destination-card">
       <div class="destination-title">${escapeHtml(item.name)}</div>
       <div class="muted">${escapeHtml(item.address || '未提取到地址')} · 停留 ${Number(item.expected_stay_min)} 分钟</div>
       ${details ? `<div class="muted">${details}</div>` : ''}
       <div class="${located ? 'log' : 'err'}">${located ? `已定位：${Number(item.lng).toFixed(6)}, ${Number(item.lat).toFixed(6)}${item.resolution_source === 'amap_share_url' ? '（高德分享位置）' : ''}` : '无法可靠定位，需要手动地图选点'}</div>
+      ${!located && locationChoices ? `<div class="log">请选择具体门店：</div><div class="destination-actions">${locationChoices}</div>` : ''}
       <div class="destination-actions">
         ${located ? `<button onclick="addImportedDestination(${index})">确认并加入地点</button>` : `<button onclick="copyImportedToManual(${index})">转到手动选点</button>`}
       </div>
     </div>`;
   }).join('');
+}
+
+function selectImportedLocation(itemIndex, placeIndex) {
+  const item = state.importedCandidates[itemIndex];
+  const place = item?.location_candidates?.[placeIndex];
+  if (!item || !place) return;
+  Object.assign(item, {
+    name: place.name || item.name, address: place.address || item.address,
+    category: place.category || item.category, lat: Number(place.lat), lng: Number(place.lng),
+    formatted_address: place.address || '', resolved: true,
+    resolution_error: null, resolution_source: 'poi_confirmed',
+  });
+  renderSharedTextResults();
+  setPickedLocation(Number(place.lat), Number(place.lng), { address: place.address || place.name, center: true });
+  toast('已选择具体门店，请确认后加入 Trip');
 }
 
 async function addImportedDestination(index) {
@@ -1116,7 +1168,7 @@ function renderItinerary() {
   const panel = document.getElementById('itineraryPanel');
   const body = document.getElementById('itineraryBody');
   const plan = state.itinerary;
-  if (!plan) { panel.style.display = 'none'; return; }
+  if (!plan || state.workflowMode !== 'route') { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
   const arrivals = plan.participant_arrivals.map(p => {
     const mode = escapeHtml(p.mode === 'driving' ? '自驾' : '公交');
@@ -1148,7 +1200,16 @@ function renderItinerary() {
 
 async function confirmItinerary(planId) {
   try {
-    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/${planId}/confirm`, 'POST', {});
+    const hasEstimated = (state.itinerary?.participant_arrivals || []).some(item => item.estimated)
+      || (state.itinerary?.route_legs || []).some(item => item.estimated);
+    let acceptEstimatedRoutes = false;
+    if (hasEstimated) {
+      acceptEstimatedRoutes = confirm('方案包含直线估算路段，不能作为正式导航。仍要接受估算并锁定该方案吗？');
+      if (!acceptEstimatedRoutes) return;
+    }
+    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/${planId}/confirm`, 'POST', {
+      accept_estimated_routes: acceptEstimatedRoutes,
+    });
     if (state.currentTrip) state.currentTrip.status = 'confirmed';
     renderItinerary();
     updateFlowUI();
@@ -1224,7 +1285,7 @@ async function doRecommend() {
 function renderResult() {
   const panel = document.getElementById('resultPanel');
   const body = document.getElementById('resultBody');
-  if (!state.candidates.length) { panel.style.display = 'none'; return; }
+  if (!state.candidates.length || state.workflowMode !== 'meeting') { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
   body.innerHTML = state.candidates.map(c => {
     const id = candidateId(c);
@@ -1237,10 +1298,13 @@ function renderResult() {
         const lots = (pp.parking.lots || []).map(l => escapeHtml(l.name)).join('、') || '无';
         parking = `<div class="muted">🅿️ ${escapeHtml(pp.parking.difficulty)}；附近：${lots}</div>`;
       }
+      const routeDetail = pp.estimated
+        ? `<div class="err">该路线为直线估算，不可导航：${escapeHtml(pp.fallback_reason || '高德未返回完整路线')}</div>`
+        : renderRouteSteps(pp.steps);
       return `<tr>
         <td>${escapeHtml(pp.name)}</td><td>${mode}</td>
         <td>${pp.travel_time_min} 分钟</td>
-        <td>${escapeHtml(pp.route_summary)}${parking}</td>
+        <td>${escapeHtml(pp.route_summary)}${parking}${routeDetail}</td>
       </tr>`;
     }).join('');
     return `<div class="cand-block">
@@ -1344,8 +1408,8 @@ function drawAmap(fitView = true) {
       content: `<div style="background:#00b578;color:#fff;border-radius:12px;padding:2px 8px;font-size:12px">${escapeHtml(p.name)}</div>`,
     }).setMap(map);
   });
-  // 候选点（蓝色，带排名）
-  state.candidates.forEach(c => {
+  // 约点页签：候选点（蓝色，带排名）
+  (state.workflowMode === 'meeting' ? state.candidates : []).forEach(c => {
     points.push({ lng: Number(c.poi.lng), lat: Number(c.poi.lat) });
     new AMap.Marker({
       position: [c.poi.lng, c.poi.lat],
@@ -1353,8 +1417,19 @@ function drawAmap(fitView = true) {
       label: { content: `<div style="background:#3370ff;color:#fff;border-radius:50%;width:20px;height:20px;line-height:20px;text-align:center;font-size:12px">${Number(c.rank)}</div>`, direction: 'top' },
     }).setMap(map);
   });
-  // 想去地点（紫色）
-  state.destinations.forEach(d => {
+  // 约点页签只绘制排名第一候选的个人路线，避免三个候选的线路互相遮挡。
+  if (state.workflowMode === 'meeting' && state.candidates[0]) {
+    const colors = ['#1677ff', '#00a870', '#fa8c16', '#eb2f96', '#13c2c2'];
+    state.candidates[0].per_person.forEach((person, index) => {
+      if (!person.polyline?.length) return;
+      new AMap.Polyline({
+        path: person.polyline, strokeColor: colors[index % colors.length], strokeWeight: 4,
+        strokeStyle: person.estimated ? 'dashed' : 'solid', showDir: true,
+      }).setMap(map);
+    });
+  }
+  // 多地点页签：想去地点（紫色）
+  (state.workflowMode === 'route' ? state.destinations : []).forEach(d => {
     points.push({ lng: Number(d.lng), lat: Number(d.lat) });
     new AMap.Marker({
       position: [d.lng, d.lat], title: `想去：${d.name}`,
@@ -1372,7 +1447,7 @@ function drawAmap(fitView = true) {
     }).setMap(map);
   }
   // 规划快照自带所有参与者及高德道路轨迹，避免不同客户端本地状态造成显示差异。
-  if (state.itinerary?.ordered_stops?.length) {
+  if (state.workflowMode === 'route' && state.itinerary?.ordered_stops?.length) {
     const stops = state.itinerary.ordered_stops;
     const first = stops[0];
     const colors = ['#1677ff', '#00a870', '#fa8c16', '#eb2f96', '#13c2c2'];
@@ -1418,8 +1493,11 @@ function fbBounds() {
   state.participants.forEach(p => {
     if (p.start_location) pts.push({ lat: p.start_location.lat, lng: p.start_location.lng });
   });
-  state.candidates.forEach(c => pts.push({ lat: c.poi.lat, lng: c.poi.lng }));
-  state.destinations.forEach(d => pts.push({ lat: d.lat, lng: d.lng }));
+  if (state.workflowMode === 'meeting') {
+    state.candidates.forEach(c => pts.push({ lat: c.poi.lat, lng: c.poi.lng }));
+  } else if (state.workflowMode === 'route') {
+    state.destinations.forEach(d => pts.push({ lat: d.lat, lng: d.lng }));
+  }
   if (state.picked) pts.push(state.picked);
   if (!pts.length) return { minLat: 39.70, maxLat: 40.15, minLng: 116.15, maxLng: 116.65 };
 
@@ -1457,7 +1535,7 @@ function drawFallback() {
   state.fbBounds = bounds;
   const prj = fbProject(bounds, canvas);
 
-  if (state.itinerary?.ordered_stops?.length) {
+  if (state.workflowMode === 'route' && state.itinerary?.ordered_stops?.length) {
     const stops = state.itinerary.ordered_stops;
     const first = stops[0];
     const colors = ['#1677ff', '#00a870', '#fa8c16', '#eb2f96', '#13c2c2'];
@@ -1483,6 +1561,21 @@ function drawFallback() {
     ctx.restore();
   }
 
+  if (state.workflowMode === 'meeting' && state.candidates[0]) {
+    const colors = ['#1677ff', '#00a870', '#fa8c16', '#eb2f96', '#13c2c2'];
+    ctx.save(); ctx.lineWidth = 3;
+    state.candidates[0].per_person.forEach((person, index) => {
+      if (!person.polyline?.length) return;
+      ctx.strokeStyle = colors[index % colors.length];
+      ctx.setLineDash(person.estimated ? [6, 5] : []); ctx.beginPath();
+      person.polyline.forEach((point, i) => i
+        ? ctx.lineTo(prj.sx(point[0]), prj.sy(point[1]))
+        : ctx.moveTo(prj.sx(point[0]), prj.sy(point[1])));
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
   // 参与者出发点（绿）
   state.participants.forEach(p => {
     if (!p.start_location) return;
@@ -1492,15 +1585,15 @@ function drawFallback() {
     ctx.fillStyle = '#1f2329'; ctx.font = '12px sans-serif';
     ctx.fillText(`${p.name}（出发）`, prj.sx(lng) + 10, prj.sy(lat) + 4);
   });
-  // 候选点（蓝）
-  state.candidates.forEach(c => {
+  // 约点页签候选点（蓝）
+  (state.workflowMode === 'meeting' ? state.candidates : []).forEach(c => {
     ctx.fillStyle = '#3370ff';
     ctx.beginPath(); ctx.arc(prj.sx(c.poi.lng), prj.sy(c.poi.lat), 7, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#1f2329'; ctx.font = '12px sans-serif';
     ctx.fillText(`#${c.rank} ${c.poi.name}`, prj.sx(c.poi.lng) + 10, prj.sy(c.poi.lat) + 4);
   });
-  // 想去地点（紫）
-  state.destinations.forEach(d => {
+  // 多地点页签想去地点（紫）
+  (state.workflowMode === 'route' ? state.destinations : []).forEach(d => {
     ctx.fillStyle = '#722ed1';
     ctx.beginPath(); ctx.arc(prj.sx(d.lng), prj.sy(d.lat), 7, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#1f2329'; ctx.font = '12px sans-serif';

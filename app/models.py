@@ -34,6 +34,7 @@ class Trip(Base):
     planned_start_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     planned_end_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     optimization_objective: Mapped[str] = mapped_column(String(20), default="balanced")
+    primary_workflow: Mapped[str] = mapped_column(String(20), default="itinerary")
     input_version: Mapped[int] = mapped_column(Integer, default=1)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_by: Mapped[int | None] = mapped_column(

@@ -16,6 +16,7 @@ class LlmPlace(BaseModel):
     category: str = Field(default="", max_length=80)
     price: str = Field(default="", max_length=50)
     reason: str = Field(default="", max_length=500)
+    city: str = Field(default="", max_length=30)
 
 
 class LlmPlaceResponse(BaseModel):
@@ -62,7 +63,7 @@ class LlmPlaceParser:
         prompt = (
             "从用户提供的出行攻略或聊天文本中提取最多10个明确地点。"
             "只输出JSON对象，格式为 {\"places\":[{\"name\":\"\",\"address\":\"\","
-            "\"category\":\"\",\"price\":\"\",\"reason\":\"\"}]}。"
+            "\"category\":\"\",\"price\":\"\",\"reason\":\"\",\"city\":\"\"}]}。"
             "不要猜测不存在的地址；不确定字段使用空字符串；不要输出解释。\n\n用户文本：\n"
             + text[:6000]
         )

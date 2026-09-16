@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..models import ItineraryPlan, Trip, TripDestination, TripParticipant, User
-from ..schemas import PlanningSettingsUpdate
+from ..schemas import ConfirmPlanRequest, PlanningSettingsUpdate
 from ..security import get_current_user
 from ..services.access import require_trip_active, require_trip_member
 from ..services.itinerary import plan_itinerary
@@ -35,6 +35,8 @@ async def update_planning_settings(
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以修改规划参数")
     trip = await require_trip_active(db, trip_id)
+    if trip.primary_workflow != "itinerary":
+        raise HTTPException(status_code=409, detail="当前 Trip 主方案是共同约点，请由发起人先切换为多地点路线")
     trip.planned_start_at = body.planned_start_at
     trip.planned_end_at = body.planned_end_at
     trip.group_transport_mode = body.group_transport_mode
@@ -68,6 +70,8 @@ async def create_itinerary_plan(
 ) -> dict:
     await require_trip_member(db, trip_id, user)
     trip = await require_trip_active(db, trip_id)
+    if trip.primary_workflow != "itinerary":
+        raise HTTPException(status_code=409, detail="当前 Trip 主方案是共同约点，请由发起人先切换为多地点路线")
     if not trip.planned_start_at or not trip.planned_end_at:
         raise HTTPException(status_code=409, detail="请先设置行程开始和结束时间")
 
@@ -145,6 +149,7 @@ async def get_latest_plan(
 @router.post("/itinerary-plans/{plan_id}/confirm")
 async def confirm_plan(
     trip_id: int, plan_id: int,
+    body: ConfirmPlanRequest | None = None,
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ) -> dict:
     participant = await require_trip_member(db, trip_id, user)
@@ -158,6 +163,14 @@ async def confirm_plan(
         raise HTTPException(status_code=409, detail="地点或规划参数已变化，请重新生成路线")
     if trip.status != "active":
         raise HTTPException(status_code=409, detail="trip 已确认锁定")
+    has_estimated = any(item.get("estimated") for item in (plan.participant_arrivals or [])) or any(
+        item.get("estimated") for item in (plan.route_legs or [])
+    )
+    if has_estimated and not (body and body.accept_estimated_routes):
+        raise HTTPException(
+            status_code=409,
+            detail="方案包含不可导航的直线估算路段；请恢复高德配额后重新规划，或明确接受估算结果",
+        )
     plan.status = "confirmed"
     trip.status = "confirmed"
     await db.commit()

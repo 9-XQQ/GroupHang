@@ -5,6 +5,7 @@
 
 关键约束（方案文档强调）：不同出行方式的人必须分开算耗时，不能混用一套时间。
 """
+import asyncio
 import math
 from typing import Any
 
@@ -23,7 +24,7 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return _haversine_km(lat1, lng1, lat2, lng2)
 
 
-async def generate_candidates(participants: list[dict], max_candidates: int = 15) -> list[dict]:
+async def generate_candidates(participants: list[dict], max_candidates: int = 6) -> list[dict]:
     """生成候选碰面点：包围盒内网格采样 + 中心点周边热门 POI。"""
     lats = [p["lat"] for p in participants]
     lngs = [p["lng"] for p in participants]
@@ -139,13 +140,6 @@ async def recommend(participants: list[dict], objective: str | None = None) -> l
                 for driving_idx, p in enumerate(driving_ps)
             }
 
-        # 停车信息：只依赖目的地，每候选点取一次，共享给所有自驾者
-        parking: dict[str, Any] = {"difficulty": "周末商圈车位可能紧张", "lots": []}
-        if driving_ps and amap.available:
-            lots = await amap.parking_nearby((c["lat"], c["lng"]))
-            if lots:
-                parking = {"difficulty": "附近有停车场，建议预留找车位时间", "lots": lots}
-
         per_person: list[dict] = []
         times: list[float] = []
         for p in participants:
@@ -159,7 +153,7 @@ async def recommend(participants: list[dict], objective: str | None = None) -> l
                         "mode": p["mode"],
                         "travel_time_min": round(mins),
                         "route_summary": summary,
-                        "parking": parking,
+                        "parking": None,
                     }
                 )
             else:
@@ -203,4 +197,43 @@ async def recommend(participants: list[dict], objective: str | None = None) -> l
     for rank, s in enumerate(top, start=1):
         s["rank"] = rank
         s["objective"] = objective or "minimax"
+
+    # 只为 Top 3 请求完整路线和停车信息，避免对全部粗筛候选重复调用昂贵接口。
+    async def enrich_candidate(candidate: dict) -> None:
+        destination = (candidate["poi"]["lat"], candidate["poi"]["lng"])
+        driving_people = [p for p in participants if p["mode"] == "driving"]
+        parking: dict[str, Any] | None = None
+        if driving_people and amap.available:
+            lots = await amap.parking_nearby(destination)
+            parking = {
+                "difficulty": "附近有停车场，建议预留找车位时间" if lots else "周末商圈车位可能紧张",
+                "lots": lots or [],
+            }
+
+        async def enrich_person(person_result: dict) -> None:
+            source = next(p for p in participants if p["user_id"] == person_result["user_id"])
+            person_result["origin"] = {"lat": source["lat"], "lng": source["lng"]}
+            if source["mode"] == "driving":
+                person_result["parking"] = parking
+            detail = await amap.route_detail(
+                (source["lat"], source["lng"]), destination, source["mode"]
+            ) if amap.available else None
+            if detail:
+                person_result.update({
+                    "polyline": detail.get("polyline", []), "steps": detail.get("steps", []),
+                    "distance_km": detail.get("distance_km"), "estimated": False,
+                    "fallback_reason": None,
+                })
+            else:
+                person_result.update({
+                    "polyline": [[source["lng"], source["lat"]], [destination[1], destination[0]]],
+                    "steps": [],
+                    "distance_km": round(haversine_km(source["lat"], source["lng"], *destination), 2),
+                    "estimated": True,
+                    "fallback_reason": amap.last_error or "高德未返回完整路线",
+                })
+
+        await asyncio.gather(*(enrich_person(item) for item in candidate["per_person"]))
+
+    await asyncio.gather(*(enrich_candidate(candidate) for candidate in top))
     return top

@@ -34,6 +34,10 @@ class JoinRequest(BaseModel):
     invite_code: str = Field(min_length=6, max_length=8)
 
 
+class TripWorkflowUpdate(BaseModel):
+    primary_workflow: Literal["meeting", "itinerary"]
+
+
 class ParticipantUpdate(BaseModel):
     start_location: Location
     transport_mode: Literal["driving", "transit"]
@@ -101,6 +105,7 @@ class SharedTextParseRequest(BaseModel):
     text: str = Field(min_length=2, max_length=10000)
     default_stay_min: int = Field(default=60, ge=5, le=720)
     use_llm: bool = False
+    preferred_city: str | None = Field(default=None, max_length=30)
 
 
 class PlanningSettingsUpdate(BaseModel):
@@ -118,6 +123,10 @@ class PlanningSettingsUpdate(BaseModel):
         if (self.planned_end_at - self.planned_start_at).total_seconds() > 24 * 3600:
             raise ValueError("单次行程时间不能超过 24 小时")
         return self
+
+
+class ConfirmPlanRequest(BaseModel):
+    accept_estimated_routes: bool = False
 
 
 class DestinationFeedbackUpdate(BaseModel):

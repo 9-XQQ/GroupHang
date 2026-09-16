@@ -66,7 +66,7 @@ project1/
 │     ├─ llm_parser.py        可选 LLM 地点提取适配器
 │     └─ ws.py                WebSocket 连接管理与广播
 ├─ frontend/index.html        当前全部前端页面、样式和脚本
-├─ migrations/               Alembic 环境与 0001～0005 迁移
+├─ migrations/               Alembic 环境与 0001～0006 迁移
 ├─ tests/test_phase1.py       33 个 unittest 单元/规则测试
 ├─ test_e2e.py               需要已启动服务和 PostgreSQL 的完整 HTTP E2E
 ├─ scripts/evaluate_place_parser.py  规则/LLM 地点解析评测脚本
@@ -82,13 +82,14 @@ project1/
 ## 3. 数据库和 Alembic 当前状态
 
 - 数据库：PostgreSQL，异步驱动 `asyncpg`；当前不使用 PostGIS，坐标为 Float/JSONB。
-- 实际执行 `python -m alembic current` 与 `heads` 均返回：`0005_destination_feedback (head)`。
+- 实际执行 `python -m alembic current` 与 `heads` 均返回：`0006_trip_primary_workflow (head)`。
 - 迁移链：
   - `0001_phase1_baseline`：用户、Trip、参与者、约点结果和投票基础表。
   - `0002_phase2a_destinations`：多目的地、规划参数、`input_version`、`trip_destinations`、`itinerary_plans`。
   - `0003_availability`：参与者 `available_from` / `available_until`。
   - `0004_trip_lifecycle`：`finished → confirmed`，新增 `completed_at` / `completed_by`。
   - `0005_destination_feedback`：已完成行程的逐用户地点评价。
+  - `0006_trip_primary_workflow`：创建者控制的 Trip 主方案类型。
 - 当前主要表：`users`、`trips`、`trip_participants`、`meeting_point_results`、`trip_votes`、`trip_destinations`、`itinerary_plans`。
 - 本次 E2E 成功写入了开发数据库中的测试用户和一个新 Trip（测试输出为 `trip_id=2`）；脚本不会自动清理历史测试数据。
 - Phase 4A-1/2 已新增 `completed_at`、`completed_by` 和 `destination_feedback`；解析反馈表尚不存在。
@@ -150,10 +151,10 @@ python -m alembic upgrade head
 
 | 检查 | 结果 |
 |---|---|
-| `python -m unittest discover -s tests -v` | 35/35 通过 |
+| `python -m unittest discover -s tests -v` | 39/39 通过 |
 | `python -m compileall -q app tests test_e2e.py scripts` | 通过 |
 | 前端内嵌 JavaScript `new Function` 语法检查 | 通过 |
-| `python -m alembic current` / `heads` | `0005_destination_feedback (head)` |
+| `python -m alembic current` / `heads` | `0006_trip_primary_workflow (head)` |
 | OpenAPI 路径生成 | 20 组 HTTP 业务/基础路径正常生成 |
 | 启动 Uvicorn 后运行 `python test_e2e.py http://127.0.0.1:8000` | 通过，退出码 0，约 90 秒 |
 
@@ -194,7 +195,15 @@ E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两�
 
 ## 10. 下一阶段开发建议
 
-Phase 4A-1/2 已完成。下一步优先进入 Phase 4A-3 解析修正反馈：解析响应增加 `parse_session_id`，记录候选被接受、编辑或拒绝的结构化动作，同时确保不保存原始聊天全文；通过后再做个性化。
+Phase 4A-1/2 后端闭环已完成，但 2026-09-16 手动测试暴露了核心回归。暂缓 Phase 4A-3，按以下顺序处理：
+
+1. 已完成首批：统一 Trip 主方案类型与多人客户端语义，隔离共同约点/多地点结果和地图图层，并为约点 Top 3 增加路线步骤与 geometry。
+2. 已完成首版文本地点消歧：使用城市上下文和 POI 多候选，非唯一精确结果必须人工确认。
+3. 下一步继续分类处理高德 `10021` 配额错误并增加调用统计；候选粗筛和 Top 3 详情已先行降耗。
+4. 将地点评价和停留时间从浏览器弹窗改为可见表单，并增加浏览器自动化测试。
+5. 增加 DeepSeek usage/cache 可观测性；之后再继续 Phase 4A-3。
+
+完整反馈和优先级记录在私有文档 `docs_private/2026-09-16-手动测试反馈与优先级.md`。
 
 ## 11. 下一位 Codex Agent 开始工作前必须阅读的文件
 

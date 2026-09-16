@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
-from ..models import MeetingPointResult, TripParticipant, User
+from ..models import MeetingPointResult, Trip, TripParticipant, User
 from ..schemas import MeetingPointRequest
 from ..security import get_current_user
 from ..services.access import require_trip_active, require_trip_member
@@ -59,7 +59,9 @@ async def compute_meeting_points(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
-    await require_trip_active(db, trip_id)
+    trip = await require_trip_active(db, trip_id)
+    if trip.primary_workflow != "meeting":
+        raise HTTPException(status_code=409, detail="当前 Trip 主方案是多地点路线，请由发起人先切换为共同约点")
 
     participants = await _load_participants(trip_id, db)
     objective = body.objective if body else None

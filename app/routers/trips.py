@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..models import ItineraryPlan, MeetingPointResult, Trip, TripParticipant, User
-from ..schemas import JoinRequest, TripCreate
+from ..schemas import JoinRequest, TripCreate, TripWorkflowUpdate
 from ..security import get_current_user
 from ..services.access import require_trip_member
 from ..services.ws import manager
@@ -42,6 +42,7 @@ async def list_my_trips(
     result = await db.execute(statement)
     return {"trips": [{
         "trip_id": trip.id, "title": trip.title, "status": trip.status,
+        "primary_workflow": trip.primary_workflow,
         "role": participant.role, "invite_code": trip.invite_code,
         "planned_start_at": trip.planned_start_at, "planned_end_at": trip.planned_end_at,
         "completed_at": trip.completed_at, "completed_by": trip.completed_by,
@@ -175,10 +176,33 @@ async def get_trip(
         "my_role": next((p.role for p in parts if p.user_id == user.id), "member"),
         "invite_code": trip.invite_code if trip.creator_id == user.id else None,
         "default_mode": trip.default_mode,
+        "primary_workflow": trip.primary_workflow,
         "participants": participants,
         "meeting_points_ready": latest_mp is not None,
         "last_computed_at": latest_mp.computed_at if latest_mp else None,
     }
+
+
+@router.put("/{trip_id}/workflow")
+async def update_trip_workflow(
+    trip_id: int,
+    body: TripWorkflowUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    participant = await require_trip_member(db, trip_id, user)
+    if participant.role != "creator":
+        raise HTTPException(status_code=403, detail="只有发起人可以切换 trip 主方案类型")
+    trip = await db.get(Trip, trip_id)
+    if trip.status != "active":
+        raise HTTPException(status_code=409, detail="已确认或完成的 trip 不能切换主方案类型")
+    trip.primary_workflow = body.primary_workflow
+    await db.commit()
+    await manager.broadcast(
+        trip_id,
+        {"type": "trip_workflow_updated", "trip_id": trip_id, "primary_workflow": trip.primary_workflow},
+    )
+    return {"trip_id": trip.id, "primary_workflow": trip.primary_workflow}
 
 
 @router.post("/{trip_id}/reopen")
