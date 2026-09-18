@@ -102,6 +102,12 @@
   .destination-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
   .destination-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
   .destination-actions button, .destination-actions select { padding: 4px 8px; font-size: 12px; }
+  .inline-editor { margin-top: 8px; padding: 9px; border-radius: 8px; background: #fafbfc; border: 1px solid var(--border); }
+  .inline-editor .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .inline-editor label { color: var(--muted); font-size: 12px; }
+  .inline-editor input, .inline-editor select, .inline-editor textarea { width: 100%; box-sizing: border-box; margin-top: 3px; }
+  .inline-editor .tag-options { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 6px; }
+  .inline-editor .tag-options label { color: var(--text); }
   .muted { color: var(--muted); font-size: 12px; }
   .log { color: var(--muted); font-size: 12px; min-height: 16px; }
   .err { color: #d4380d; font-size: 12px; }
@@ -323,6 +329,10 @@ const state = {
   placeSearchResults: [],
   currentTrip: null,
   workflowMode: '',
+  participantFormDirty: false,
+  planningFormDirty: false,
+  editingStayId: null,
+  editingFeedbackId: null,
 };
 
 // 同一浏览器的多个标签页应保持一个当前账号；多账号联调请使用无痕窗口或不同浏览器。
@@ -459,9 +469,23 @@ function clearTripState() {
   state.picked = null;
   state.currentTrip = null;
   state.workflowMode = '';
+  state.participantFormDirty = false;
+  state.planningFormDirty = false;
+  state.editingStayId = null;
+  state.editingFeedbackId = null;
   localStorage.removeItem('tripId');
   document.getElementById('tripInfo').textContent = '';
   document.getElementById('startStatus').textContent = '';
+  document.getElementById('lat').value = '';
+  document.getElementById('lng').value = '';
+  document.getElementById('availableFrom').value = '';
+  document.getElementById('availableUntil').value = '';
+  document.querySelector('input[name=mode][value=transit]').checked = true;
+  document.getElementById('planStart').value = '';
+  document.getElementById('planEnd').value = '';
+  document.getElementById('groupMode').value = 'transit';
+  document.getElementById('planObjective').value = 'balanced';
+  document.getElementById('planLog').textContent = '';
   updatePickedStatus();
   renderParticipants();
   renderDestinations();
@@ -522,7 +546,7 @@ async function openTrip(tripId) {
   document.getElementById('tripInfo').innerHTML = `trip #${Number(tripId)}：${escapeHtml(trip.title)} · ${statusText}`
     + (trip.invite_code ? `<br>邀请码：<b>${escapeHtml(trip.invite_code)}</b>（可复制给参与者）` : '');
   updateFlowUI();
-  await Promise.all([refreshParticipants(), refreshDestinations(), fetchLatestItinerary()]);
+  await Promise.all([refreshParticipants(), refreshDestinations(), fetchPlanningSettings(), fetchLatestItinerary()]);
   if (trip.status === 'completed') await refreshFeedback();
   connectWS();
   toast(`已打开 trip #${tripId}`);
@@ -614,6 +638,7 @@ async function putStart(lat, lng, mode, availableFrom = '', availableUntil = '')
     console.log('[putStart] 成功:', r);
     statusEl.textContent = `✅ 已提交（${mode === 'driving' ? '自驾' : '公交'}）`;
     statusEl.style.color = '#00b578';
+    state.participantFormDirty = false;
     toast('出发点已提交');
     // 提交已经成功；后续刷新/地图绘制失败不应被误报为“提交失败”。
     await refreshParticipants();
@@ -647,6 +672,7 @@ function setPickedLocation(lat, lng, options = {}) {
   };
   document.getElementById('lat').value = parsedLat.toFixed(6);
   document.getElementById('lng').value = parsedLng.toFixed(6);
+  state.participantFormDirty = true;
   if (options.city) {
     state.currentCity = options.city;
     document.getElementById('cityInput').value = options.city;
@@ -829,6 +855,7 @@ function connectWS() {
     }
     else if (msg.type === 'planning_settings_updated') {
       if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
+      fetchPlanningSettings();
     } else if (msg.type === 'itinerary_ready' || msg.type === 'itinerary_confirmed') fetchLatestItinerary();
     else if (msg.type === 'trip_completed') openTrip(state.tripId);
   };
@@ -923,16 +950,22 @@ async function deleteDestination(id) {
   } catch (e) { toast(e.message, true); }
 }
 
-async function editDestinationStay(id, currentValue) {
-  const raw = prompt('请输入预计停留时间（5～720分钟）', String(currentValue));
-  if (raw === null) return;
-  const stay = Number(raw);
+function editDestinationStay(id) {
+  state.editingStayId = state.editingStayId === id ? null : id;
+  renderDestinations();
+}
+
+async function saveDestinationStay(id) {
+  const stay = Number(document.getElementById(`stay-${id}`).value);
   if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('停留时间应为 5～720 分钟', true);
+  const status = document.getElementById(`stay-status-${id}`);
   try {
+    status.textContent = '保存中…';
     await api(`/trips/${state.tripId}/destinations/${id}`, 'PUT', { expected_stay_min: stay });
+    state.editingStayId = null;
     toast('预计停留时间已更新，旧路线需要重新生成');
     await refreshDestinations();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { status.textContent = `保存失败：${e.message}`; toast(e.message, true); }
 }
 
 async function refreshFeedback() {
@@ -946,41 +979,59 @@ async function refreshFeedback() {
   } catch (e) { console.error('[refreshFeedback] 失败:', e); }
 }
 
-async function editMyFeedback(destinationId) {
+function editMyFeedback(destinationId) {
+  state.editingFeedbackId = state.editingFeedbackId === destinationId ? null : destinationId;
+  renderDestinations();
+}
+
+async function saveMyFeedback(destinationId) {
   const existing = state.feedbackByDestination[destinationId]?.my_feedback || {};
-  const ratingRaw = prompt('评分（1～5，留空表示不评分）', existing.rating ?? '');
-  if (ratingRaw === null) return;
+  const ratingRaw = document.getElementById(`feedback-rating-${destinationId}`).value;
   const rating = ratingRaw.trim() === '' ? null : Number(ratingRaw);
   if (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 5)) {
     return toast('评分应为 1～5 的整数', true);
   }
-  const stayRaw = prompt('实际停留分钟数（0～1440，留空表示未知）', existing.actual_stay_min ?? '');
-  if (stayRaw === null) return;
+  const stayRaw = document.getElementById(`feedback-stay-${destinationId}`).value;
   const actualStay = stayRaw.trim() === '' ? null : Number(stayRaw);
   if (actualStay !== null && (!Number.isInteger(actualStay) || actualStay < 0 || actualStay > 1440)) {
     return toast('实际停留时间应为 0～1440 分钟', true);
   }
-  const allowedTags = ['值得再去','人多拥挤','交通方便','交通不便','停留太短','停留太长','适合拍照','适合亲子','性价比高'];
-  const tagsRaw = prompt(`标签用逗号分隔，可选：${allowedTags.join('、')}`, (existing.tags || []).join(','));
-  if (tagsRaw === null) return;
-  const tags = [...new Set(tagsRaw.split(/[,，]/).map(value => value.trim()).filter(Boolean))];
-  if (tags.some(tag => !allowedTags.includes(tag))) return toast('包含不支持的评价标签', true);
-  const comment = prompt('我的评价（最多500字，仅自己可查看文字）', existing.comment || '');
-  if (comment === null) return;
+  const tags = [...document.querySelectorAll(`input[name="feedback-tags-${destinationId}"]:checked`)].map(input => input.value);
+  const comment = document.getElementById(`feedback-comment-${destinationId}`).value;
   if (comment.length > 500) return toast('评价不能超过500字', true);
-  const revisitRaw = prompt('是否愿意再访？输入 是 / 否，留空表示不确定', existing.would_revisit === true ? '是' : existing.would_revisit === false ? '否' : '');
-  if (revisitRaw === null) return;
-  const revisitText = revisitRaw.trim();
-  if (revisitText && !['是', '否'].includes(revisitText)) return toast('再访意愿请输入“是”或“否”', true);
+  const revisitRaw = document.getElementById(`feedback-revisit-${destinationId}`).value;
+  const status = document.getElementById(`feedback-status-${destinationId}`);
   try {
+    status.textContent = '保存中…';
     await api(`/trips/${state.tripId}/destinations/${destinationId}/feedback/me`, 'PUT', {
       visited: true, rating, actual_stay_min: actualStay, tags,
       comment: comment.trim() || null,
-      would_revisit: revisitText ? revisitText === '是' : null,
+      would_revisit: revisitRaw === '' ? null : revisitRaw === 'true',
     });
+    state.editingFeedbackId = null;
     await refreshFeedback();
     toast('我的地点评价已保存');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { status.textContent = `保存失败：${e.message}`; toast(e.message, true); }
+}
+
+function feedbackEditorHtml(destinationId, existing = {}) {
+  const allowedTags = ['值得再去','人多拥挤','交通方便','交通不便','停留太短','停留太长','适合拍照','适合亲子','性价比高'];
+  const selectedTags = new Set(existing.tags || []);
+  return `<div class="inline-editor">
+    <div class="field-grid">
+      <label>评分（1～5）<input id="feedback-rating-${destinationId}" type="number" min="1" max="5" value="${existing.rating ?? ''}"></label>
+      <label>实际停留（分钟）<input id="feedback-stay-${destinationId}" type="number" min="0" max="1440" value="${existing.actual_stay_min ?? ''}"></label>
+    </div>
+    <div class="tag-options">${allowedTags.map(tag => `<label><input type="checkbox" name="feedback-tags-${destinationId}" value="${tag}" ${selectedTags.has(tag) ? 'checked' : ''}> ${tag}</label>`).join('')}</div>
+    <label style="display:block;margin-top:8px">我的评价（最多 500 字，仅自己可见）<textarea id="feedback-comment-${destinationId}" maxlength="500" rows="3">${escapeHtml(existing.comment || '')}</textarea></label>
+    <label style="display:block;margin-top:8px">是否愿意再访<select id="feedback-revisit-${destinationId}">
+      <option value="" ${existing.would_revisit == null ? 'selected' : ''}>不确定</option>
+      <option value="true" ${existing.would_revisit === true ? 'selected' : ''}>是</option>
+      <option value="false" ${existing.would_revisit === false ? 'selected' : ''}>否</option>
+    </select></label>
+    <div class="destination-actions"><button onclick="saveMyFeedback(${destinationId})">保存评价</button><button class="vote-btn" onclick="editMyFeedback(${destinationId})">取消</button></div>
+    <div class="log" id="feedback-status-${destinationId}"></div>
+  </div>`;
 }
 
 function renderDestinations() {
@@ -1005,17 +1056,24 @@ function renderDestinations() {
     const feedbackHtml = isCompleted ? `<div class="muted" style="margin-top:6px">${summary?.rating_count
       ? `成员评分 ${Number(summary.average_rating).toFixed(1)} / 5（${Number(summary.rating_count)}人）`
       : '暂无成员评分'}${mine ? ` · 我的评分 ${mine.rating ?? '未评分'}${mine.comment ? ` · ${escapeHtml(mine.comment)}` : ''}` : ''}</div>
-      <button class="vote-btn" onclick="editMyFeedback(${Number(d.id)})">${mine ? '修改我的评价' : '评价这个地点'}</button>` : '';
+      <div class="destination-actions"><button class="vote-btn" onclick="editMyFeedback(${Number(d.id)})">${state.editingFeedbackId === d.id ? '收起评价' : mine ? '修改我的评价' : '评价这个地点'}</button></div>
+      ${state.editingFeedbackId === d.id ? feedbackEditorHtml(Number(d.id), mine || {}) : ''}` : '';
+    const stayEditor = canEdit && state.editingStayId === d.id ? `<div class="inline-editor">
+      <label>预计停留时间（5～720 分钟）<input id="stay-${Number(d.id)}" type="number" min="5" max="720" value="${Number(d.expected_stay_min)}"></label>
+      <div class="destination-actions"><button onclick="saveDestinationStay(${Number(d.id)})">保存停留时间</button><button class="vote-btn" onclick="editDestinationStay(${Number(d.id)})">取消</button></div>
+      <div class="log" id="stay-status-${Number(d.id)}"></div>
+    </div>` : '';
     return `<div class="destination-card">
       <div class="destination-title"><span>📌 ${escapeHtml(d.name)}</span>${statusControl}</div>
       <div class="muted">${escapeHtml(d.address || '地图选点')} · 停留 ${Number(d.expected_stay_min)} 分钟 · ${escapeHtml(d.submitted_by.name)} 添加</div>
       <div class="destination-actions">
         ${isActive ? `<button class="vote-btn ${vote.my_vote === 1 ? 'active-up' : ''}" onclick="voteDestination(${Number(d.id)}, 1)">👍 ${vote.up}</button>
         <button class="vote-btn ${vote.my_vote === -1 ? 'active-down' : ''}" onclick="voteDestination(${Number(d.id)}, -1)">👎 ${vote.down}</button>` : ''}
-        ${canEdit ? `<button class="vote-btn" onclick="editDestinationStay(${Number(d.id)}, ${Number(d.expected_stay_min)})">修改停留时间</button>` : ''}
+        ${canEdit ? `<button class="vote-btn" onclick="editDestinationStay(${Number(d.id)})">${state.editingStayId === d.id ? '收起停留时间' : '修改停留时间'}</button>` : ''}
         ${canDelete ? `<button class="vote-btn" onclick="deleteDestination(${Number(d.id)})">删除</button>` : ''}
-        ${feedbackHtml}
       </div>
+      ${stayEditor}
+      ${feedbackHtml}
     </div>`;
   }).join('');
 }
@@ -1107,6 +1165,23 @@ function copyImportedToManual(index) {
 }
 
 // ===== Phase 2B 路线规划 =====
+async function fetchPlanningSettings(forceFormHydration = false) {
+  if (!state.tripId) return;
+  try {
+    const settings = await api(`/trips/${state.tripId}/planning-settings`);
+    if (forceFormHydration || !state.planningFormDirty) {
+      document.getElementById('planStart').value = toDateTimeLocal(settings.planned_start_at);
+      document.getElementById('planEnd').value = toDateTimeLocal(settings.planned_end_at);
+      document.getElementById('groupMode').value = settings.group_transport_mode || 'transit';
+      document.getElementById('planObjective').value = settings.optimization_objective || 'balanced';
+      state.planningFormDirty = false;
+      if (settings.planned_start_at || settings.planned_end_at) {
+        document.getElementById('planLog').textContent = '已加载上次保存的规划参数';
+      }
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
 async function savePlanningSettings() {
   if (!state.tripId) return toast('请先创建或加入 trip', true);
   const start = document.getElementById('planStart').value;
@@ -1119,6 +1194,7 @@ async function savePlanningSettings() {
       group_transport_mode: document.getElementById('groupMode').value,
       optimization_objective: document.getElementById('planObjective').value,
     });
+    state.planningFormDirty = false;
     document.getElementById('planLog').textContent = '规划参数已保存';
     return true;
   } catch (e) { toast(e.message, true); return false; }
@@ -1243,14 +1319,41 @@ async function castVote(id, value) {
 }
 
 // ===== 参与者 =====
-async function refreshParticipants() {
+async function refreshParticipants(forceFormHydration = false) {
   if (!state.tripId) return;
   try {
     const r = await api(`/trips/${state.tripId}/participants`);
     state.participants = r.participants;
+    if (forceFormHydration || !state.participantFormDirty) hydrateMyParticipantForm();
     renderParticipants();
     drawAll();
   } catch (e) { toast(e.message, true); }
+}
+
+function toDateTimeLocal(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function hydrateMyParticipantForm() {
+  const mine = state.participants.find(p => Number(p.user_id) === Number(state.user?.id));
+  if (!mine) return;
+  const location = mine.start_location;
+  document.getElementById('lat').value = location?.lat ?? '';
+  document.getElementById('lng').value = location?.lng ?? '';
+  document.getElementById('availableFrom').value = toDateTimeLocal(mine.available_from);
+  document.getElementById('availableUntil').value = toDateTimeLocal(mine.available_until);
+  const mode = mine.transport_mode === 'driving' ? 'driving' : 'transit';
+  document.querySelector(`input[name=mode][value=${mode}]`).checked = true;
+  state.participantFormDirty = false;
+  if (location || mine.available_from || mine.available_until) {
+    const statusEl = document.getElementById('startStatus');
+    statusEl.textContent = '✅ 已加载上次提交的个人出发设置';
+    statusEl.style.color = '#00b578';
+  }
 }
 
 function renderParticipants() {
@@ -1634,6 +1737,15 @@ function toast(msg, isErr = false) {
 }
 
 // ===== 启动 =====
+['lat', 'lng', 'availableFrom', 'availableUntil'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => { state.participantFormDirty = true; });
+});
+document.querySelectorAll('input[name=mode]').forEach(input => {
+  input.addEventListener('change', () => { state.participantFormDirty = true; });
+});
+['planStart', 'planEnd', 'groupMode', 'planObjective'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => { state.planningFormDirty = true; });
+});
 renderUser();
 updatePickedStatus();
 state.currentCity = localStorage.getItem('preferredMapCity') || '';

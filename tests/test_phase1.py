@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -247,6 +247,29 @@ class AmapShareLinkTests(unittest.IsolatedAsyncioTestCase):
             )
         http_client.assert_not_called()
         self.assertEqual(result["name"], "故宫")
+
+
+class AmapQuotaCircuitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_10021_opens_circuit_and_skips_followup_http_request(self):
+        client = AmapClient(key="test-key")
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "status": "0", "info": "CUQPS_HAS_EXCEEDED_THE_LIMIT", "infocode": "10021",
+        }
+        get = AsyncMock(return_value=response)
+        with patch.object(client, "_http_client", return_value=SimpleNamespace(get=get)):
+            first = await client._get("/v3/distance", {})
+            second = await client._get("/v3/distance", {})
+
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        get.assert_awaited_once()
+        self.assertIn("暂停新请求", client.last_error)
+        stats = client.request_stats()
+        self.assertTrue(stats["quota_circuit_open"])
+        self.assertEqual(stats["totals"]["api_error_10021"], 1)
+        self.assertEqual(stats["totals"]["quota_blocked"], 1)
 
 
 class AmapTransitTests(unittest.IsolatedAsyncioTestCase):

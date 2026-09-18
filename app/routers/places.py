@@ -1,9 +1,17 @@
 """地图地址和 POI 搜索。"""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ..models import User
+from ..security import get_current_user
 from ..services.amap import amap
 
 router = APIRouter(prefix="/api/places", tags=["places"])
+
+
+@router.get("/diagnostics")
+async def amap_diagnostics(_user: User = Depends(get_current_user)) -> dict:
+    """查看当前进程的高德调用结果和配额熔断状态。"""
+    return amap.request_stats()
 
 
 @router.get("/search")

@@ -8,6 +8,8 @@
 import asyncio
 import html
 import re
+import time
+from collections import Counter
 from contextvars import ContextVar
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
@@ -29,6 +31,10 @@ class AmapClient:
         self._city_cache: dict[tuple[float, float], str] = {}
         self._client: httpx.AsyncClient | None = None
         self._request_limit = asyncio.Semaphore(5)
+        self._request_stats: Counter[str] = Counter()
+        self._request_stats_by_path: dict[str, Counter[str]] = {}
+        self._quota_blocked_until = 0.0
+        self._quota_cooldown_seconds = 15 * 60
 
     @property
     def last_error(self) -> str | None:
@@ -46,6 +52,21 @@ class AmapClient:
             )
         return self._client
 
+    def _record_request(self, path: str, outcome: str) -> None:
+        self._request_stats[outcome] += 1
+        self._request_stats_by_path.setdefault(path, Counter())[outcome] += 1
+
+    def request_stats(self) -> dict:
+        """返回进程内调用统计；不暴露 API key 或请求参数。"""
+        remaining = max(0, round(self._quota_blocked_until - time.monotonic()))
+        return {
+            "available": self.available,
+            "quota_circuit_open": remaining > 0,
+            "quota_retry_after_seconds": remaining,
+            "totals": dict(self._request_stats),
+            "by_path": {path: dict(counts) for path, counts in self._request_stats_by_path.items()},
+        }
+
     async def aclose(self) -> None:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
@@ -54,11 +75,18 @@ class AmapClient:
         self.last_error = None
         if not self.available:
             self.last_error = "后端未加载 AMAP_API_KEY"
+            self._record_request(path, "unavailable")
+            return None
+        retry_after = max(0, round(self._quota_blocked_until - time.monotonic()))
+        if retry_after > 0:
+            self.last_error = f"高德接口配额已超限，已暂停新请求（约 {retry_after} 秒后重试）"
+            self._record_request(path, "quota_blocked")
             return None
         params = {**params, "key": self.key}
         data = None
         for attempt in range(2):
             try:
+                self._record_request(path, "http_attempt")
                 async with self._request_limit:
                     resp = await self._http_client().get(f"{self.base_url}{path}", params=params)
                 resp.raise_for_status()
@@ -74,10 +102,16 @@ class AmapClient:
             if attempt == 0:
                 await asyncio.sleep(0.25)
         if data is None:
+            self._record_request(path, "network_failure")
             return None
         if data.get("status") != "1":
-            self.last_error = f"高德接口失败：{data.get('info') or '未知错误'}（{data.get('infocode') or '无错误码'}）"
+            infocode = str(data.get("infocode") or "")
+            self.last_error = f"高德接口失败：{data.get('info') or '未知错误'}（{infocode or '无错误码'}）"
+            self._record_request(path, f"api_error_{infocode or 'unknown'}")
+            if infocode == "10021":
+                self._quota_blocked_until = time.monotonic() + self._quota_cooldown_seconds
             return None
+        self._record_request(path, "success")
         return data
 
     async def _resolve_city(self, location: tuple) -> str | None:
