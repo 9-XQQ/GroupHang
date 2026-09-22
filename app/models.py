@@ -147,3 +147,25 @@ class DestinationFeedback(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class PlaceParseFeedback(Base):
+    __tablename__ = "place_parse_feedback"
+    __table_args__ = (
+        UniqueConstraint(
+            "trip_id", "user_id", "parse_session_id", "candidate_id",
+            name="uq_place_parse_feedback_candidate",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    parse_session_id: Mapped[str] = mapped_column(String(36))
+    candidate_id: Mapped[str] = mapped_column(String(36))
+    parser: Mapped[str] = mapped_column(String(80))
+    action: Mapped[str] = mapped_column(String(20))
+    proposed_place: Mapped[dict] = mapped_column(JSONB)
+    final_place: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    consent_to_improve: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())

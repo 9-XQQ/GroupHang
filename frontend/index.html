@@ -49,9 +49,15 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    min-width: 0;
+    position: relative;
+    z-index: 2;
   }
   .panel h2 { font-size: 13px; margin: 0 0 2px; color: var(--muted); font-weight: 600; }
-  .row { display: flex; gap: 8px; }
+  .row { display: flex; gap: 8px; min-width: 0; }
+  .row > input, .row > select { min-width: 0; }
+  #loginStep .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  #loginStep #name { grid-column: 1 / -1; width: 100% !important; }
   input, select, button {
     font: inherit;
     padding: 7px 10px;
@@ -83,11 +89,12 @@
   .tag.orange { background: #fff3e6; color: var(--orange); }
   #map { height: 100%; min-height: 420px; border-radius: 10px; border: 1px solid var(--border); background: #eef1f5; }
   canvas#fallback { width: 100%; height: 100%; min-height: 420px; display: block; }
-  #mapWrap { position: relative; height: 100%; min-height: 420px; }
+  #mapWrap { position: relative; z-index: 1; height: 100%; min-height: 420px; min-width: 0; overflow: hidden; border-radius: 10px; }
   .map-tip {
-    position: absolute; top: 10px; left: 10px; right: 10px;
+    position: fixed; top: 58px; right: 20px; width: min(420px, calc(100vw - 40px));
     background: #fff9e6; color: #8a6d00; border: 1px solid #f0e3b0;
-    border-radius: 8px; padding: 8px 12px; font-size: 12px; display: none; z-index: 10;
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; display: none; z-index: 1000;
+    box-shadow: 0 6px 20px rgba(31, 35, 41, 0.16); pointer-events: none;
   }
   table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
   th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -194,6 +201,24 @@
         <button id="completeTripButton" onclick="completeCurrentTrip()" style="display:none;flex:1">标记已完成</button>
         <button class="secondary" onclick="deleteCurrentTrip()" style="flex:1;color:#d4380d">删除当前 trip</button>
       </div>
+      <details style="margin-top:8px">
+        <summary>我的历史偏好</summary>
+        <label class="muted"><input id="personalizationEnabled" type="checkbox" onchange="savePersonalizationEnabled()" /> 启用个性化</label>
+        <div class="inline-editor" style="margin-top:6px">
+          <div class="muted">常用交通方式</div>
+          <label><input id="preferenceTransit" type="checkbox" /> 公交/地铁</label>
+          <label><input id="preferenceDriving" type="checkbox" /> 驾车</label>
+          <label>偏好地点类别（逗号分隔）<input id="preferredCategories" placeholder="博物馆，公园" /></label>
+          <label>希望避开的标签（逗号分隔）<input id="explicitAvoidTags" placeholder="人多拥挤，交通不便" /></label>
+          <button class="secondary" onclick="saveExplicitPreferences()">保存主动偏好</button>
+          <div id="preferenceSaveStatus" class="log" role="status" aria-live="polite"></div>
+        </div>
+        <div class="destination-actions">
+          <button class="secondary" onclick="rebuildPreferences()">从已完成评价重新分析</button>
+          <button class="secondary" onclick="clearDerivedPreferences()">清空派生偏好</button>
+        </div>
+        <div id="preferenceSummary" class="log">正在加载…</div>
+      </details>
     </div>
 
     <div class="requires-trip flow-hidden workflow-choice">
@@ -273,6 +298,8 @@
     <div id="importWorkflow" data-workflow="route" class="flow-hidden">
       <h2>8. 分享文本导入地点（Phase 3）</h2>
       <textarea id="sharedText" maxlength="10000" rows="7" style="width:100%;box-sizing:border-box" placeholder="可直接粘贴高德地点分享链接，或输入：&#10;名称：故宫博物院&#10;地址：北京市东城区景山前街4号&#10;&#10;也支持：名称｜地址｜品类｜人均｜推荐理由"></textarea>
+      <select id="sourcePlatform" style="width:100%;margin-top:6px"><option value="generic">普通文本</option><option value="xiaohongshu">小红书</option><option value="dianping">大众点评</option><option value="meituan">美团</option><option value="other">其他来源</option></select>
+      <textarea id="commentsText" maxlength="20000" rows="5" style="width:100%;box-sizing:border-box;margin-top:6px" placeholder="可选：粘贴评论。每条普通评论单独一行；如需保留楼层关系，可使用：&#10;评论：味道很好但排队久&#10;回复：周末要等一小时"></textarea>
       <div class="row" style="margin-top:6px">
         <label class="muted" for="importStay" style="align-self:center">默认停留（分钟）</label>
         <input id="importStay" type="number" min="5" max="720" value="60" style="width:80px" />
@@ -308,7 +335,7 @@
 <script>
 // ===== 全局状态 =====
 const state = {
-  // 每次打开/刷新页面都重新登录，避免恢复旧用户、旧 trip 和旧选点造成误解。
+  // 刷新后恢复同一账号，但不自动打开旧 trip，也不恢复旧地图选点。
   token: '',
   user: null,
   tripId: null,
@@ -333,6 +360,13 @@ const state = {
   planningFormDirty: false,
   editingStayId: null,
   editingFeedbackId: null,
+  llmUsage: null,
+  parseSessionId: null,
+  parseParser: '',
+  pendingImportedFeedback: null,
+  preferences: null,
+  commentSummary: null,
+  commentAssignments: {},
 };
 
 // 同一浏览器的多个标签页应保持一个当前账号；多账号联调请使用无痕窗口或不同浏览器。
@@ -349,9 +383,7 @@ if (authChannel) {
   };
 }
 
-// 清理旧版本遗留的自动登录数据；高德地图 Key 配置仍保留。
-localStorage.removeItem('token');
-localStorage.removeItem('user');
+// 清理旧版本遗留的 Trip/地图配置；登录态按用户最新验收要求允许刷新恢复。
 localStorage.removeItem('tripId');
 localStorage.removeItem('amapKey');
 localStorage.removeItem('amapSec');
@@ -390,9 +422,11 @@ async function doLogin() {
     const r = await api('/auth/login', 'POST', loginBody);
     if (previousUserId && previousUserId !== r.user.id) clearTripState();
     state.token = r.token; state.user = r.user;
+    localStorage.setItem('token', state.token);
+    localStorage.setItem('user', JSON.stringify(state.user));
     authChannel?.postMessage({ type: 'login', source: pageInstanceId, userId: r.user.id, userName: r.user.name });
     renderUser();
-    await refreshMyTrips();
+    await Promise.all([refreshMyTrips(), refreshPreferences()]);
     if (state.ws) { state.ws.onclose = null; state.ws.close(); state.ws = null; }
     if (state.tripId) { refreshParticipants(); connectWS(); }
     toast(`已登录：${r.user.name}`);
@@ -406,6 +440,23 @@ function renderUser() {
   el.textContent = state.user ? `👤 ${state.user.name}（${maskedPhone}）` : '未登录';
   document.getElementById('logoutButton').style.display = state.user ? 'inline-block' : 'none';
   updateFlowUI();
+}
+
+async function restoreSession() {
+  const token = localStorage.getItem('token') || '';
+  const rawUser = localStorage.getItem('user');
+  if (!token || !rawUser) return;
+  try {
+    const user = JSON.parse(rawUser);
+    if (!user?.id || !user?.name) throw new Error('invalid stored user');
+    state.token = token;
+    state.user = user;
+    renderUser();
+    await Promise.all([refreshMyTrips(), refreshPreferences()]);
+  } catch (error) {
+    console.warn('[restoreSession] 本地登录态无效，已清理', error);
+    clearSession(false);
+  }
 }
 
 function updateFlowUI() {
@@ -473,6 +524,12 @@ function clearTripState() {
   state.planningFormDirty = false;
   state.editingStayId = null;
   state.editingFeedbackId = null;
+  state.llmUsage = null;
+  state.parseSessionId = null;
+  state.parseParser = '';
+  state.pendingImportedFeedback = null;
+  state.commentSummary = null;
+  state.commentAssignments = {};
   localStorage.removeItem('tripId');
   document.getElementById('tripInfo').textContent = '';
   document.getElementById('startStatus').textContent = '';
@@ -501,12 +558,117 @@ function clearSession(notifyPeers = true) {
   state.token = '';
   state.user = null;
   state.myTrips = [];
+  state.preferences = null;
   document.getElementById('myTripSelect').innerHTML = '<option value="">请先登录</option>';
+  document.getElementById('preferenceSummary').textContent = '登录后查看';
   localStorage.removeItem('token');
   localStorage.removeItem('user');
   clearTripState();
   renderUser();
   if (notifyPeers && hadUser) authChannel?.postMessage({ type: 'logout', source: pageInstanceId });
+}
+
+async function refreshPreferences() {
+  if (!state.token) return;
+  try {
+    state.preferences = await api('/users/me/preferences');
+    renderPreferences();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderPreferences() {
+  const prefs = state.preferences;
+  const el = document.getElementById('preferenceSummary');
+  if (!prefs) { el.textContent = '暂无偏好数据'; return; }
+  document.getElementById('personalizationEnabled').checked = Boolean(prefs.personalization_enabled);
+  const explicit = prefs.explicit || {};
+  document.getElementById('preferenceTransit').checked = (explicit.preferred_transport_modes || []).includes('transit');
+  document.getElementById('preferenceDriving').checked = (explicit.preferred_transport_modes || []).includes('driving');
+  document.getElementById('preferredCategories').value = (explicit.preferred_categories || []).join('，');
+  document.getElementById('explicitAvoidTags').value = (explicit.avoid_tags || []).join('，');
+  const derived = prefs.derived || {};
+  const categories = Object.entries(derived.category_scores || {})
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map(([name, score]) => `${escapeHtml(name)} ${Number(score).toFixed(2)}`).join('、');
+  const stays = Object.entries(derived.average_actual_stay_min || {})
+    .map(([name, minutes]) => `${escapeHtml(name)}约${Number(minutes)}分钟`).join('、');
+  const avoids = (derived.avoid_tags || []).map(escapeHtml).join('、');
+  el.innerHTML = `有效评价 ${Number(derived.sample_count || 0)} 条${derived.recommendation_ready ? '，样本已足够用于后续推荐解释' : '，至少 3 条后才用于推荐'}<br>`
+    + `偏好类别：${categories || '暂无'}<br>典型停留：${stays || '暂无'}<br>经常避开：${avoids || '暂无'}`;
+}
+
+function preferenceList(id) {
+  const raw = document.getElementById(id).value.trim();
+  if (!raw) return [];
+  return [...new Set(raw.split(/[,，]/).map(value => value.trim()).filter(Boolean))];
+}
+
+function explicitPreferencesFromForm() {
+  return {
+    preferred_transport_modes: [
+      document.getElementById('preferenceTransit').checked ? 'transit' : '',
+      document.getElementById('preferenceDriving').checked ? 'driving' : '',
+    ].filter(Boolean),
+    preferred_categories: preferenceList('preferredCategories'),
+    avoid_tags: preferenceList('explicitAvoidTags'),
+  };
+}
+
+async function saveExplicitPreferences() {
+  if (!state.preferences) return;
+  const status = document.getElementById('preferenceSaveStatus');
+  const explicit = explicitPreferencesFromForm();
+  status.textContent = '正在保存…';
+  try {
+    state.preferences = await api('/users/me/preferences', 'PUT', {
+      personalization_enabled: document.getElementById('personalizationEnabled').checked,
+      explicit,
+    });
+    const saved = state.preferences.explicit || {};
+    const fields = ['preferred_transport_modes', 'preferred_categories', 'avoid_tags'];
+    if (fields.some(field => JSON.stringify(saved[field] || []) !== JSON.stringify(explicit[field]))) {
+      throw new Error('服务端返回的偏好与本次提交不一致，请重试');
+    }
+    renderPreferences();
+    await refreshDestinations();
+    status.textContent = '主动偏好已保存';
+    toast('主动偏好已保存');
+  } catch (e) {
+    status.textContent = `保存失败：${e.message}`;
+    toast(e.message, true);
+  }
+}
+
+async function savePersonalizationEnabled() {
+  if (!state.preferences) return;
+  try {
+    state.preferences = await api('/users/me/preferences', 'PUT', {
+      personalization_enabled: document.getElementById('personalizationEnabled').checked,
+      explicit: explicitPreferencesFromForm(),
+    });
+    renderPreferences();
+    await refreshDestinations();
+    toast(state.preferences.personalization_enabled ? '个性化已启用' : '个性化已关闭');
+  } catch (e) { renderPreferences(); toast(e.message, true); }
+}
+
+async function rebuildPreferences() {
+  try {
+    state.preferences = await api('/users/me/preferences/rebuild', 'POST', {});
+    renderPreferences();
+    await refreshDestinations();
+    toast('已根据本人完成行程的评价重新分析');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function clearDerivedPreferences() {
+  if (!confirm('确认清空派生偏好？历史行程评价不会删除，之后仍可重新分析。')) return;
+  try {
+    state.preferences = await api('/users/me/preferences/derived', 'DELETE');
+    renderPreferences();
+    await refreshDestinations();
+    toast('派生偏好已清空');
+  } catch (e) { toast(e.message, true); }
 }
 
 // ===== trip =====
@@ -542,14 +704,23 @@ async function openTrip(tripId) {
   state.tripId = Number(tripId);
   state.currentTrip = trip;
   state.workflowMode = trip.primary_workflow === 'meeting' ? 'meeting' : 'route';
-  const statusText = ({ active: '规划中', confirmed: '已确认', completed: '已完成' })[trip.status] || trip.status;
-  document.getElementById('tripInfo').innerHTML = `trip #${Number(tripId)}：${escapeHtml(trip.title)} · ${statusText}`
-    + (trip.invite_code ? `<br>邀请码：<b>${escapeHtml(trip.invite_code)}</b>（可复制给参与者）` : '');
+  renderTripInfo();
   updateFlowUI();
   await Promise.all([refreshParticipants(), refreshDestinations(), fetchPlanningSettings(), fetchLatestItinerary()]);
   if (trip.status === 'completed') await refreshFeedback();
   connectWS();
   toast(`已打开 trip #${tripId}`);
+}
+
+function renderTripInfo() {
+  const trip = state.currentTrip;
+  if (!state.tripId || !trip) {
+    document.getElementById('tripInfo').textContent = '';
+    return;
+  }
+  const statusText = ({ active: '规划中', confirmed: '已确认', completed: '已完成' })[trip.status] || trip.status;
+  document.getElementById('tripInfo').innerHTML = `trip #${Number(state.tripId)}：${escapeHtml(trip.title)} · ${statusText}`
+    + (trip.invite_code ? `<br>邀请码：<b>${escapeHtml(trip.invite_code)}</b>（可复制给参与者）` : '');
 }
 
 async function doCreateTrip() {
@@ -856,7 +1027,13 @@ function connectWS() {
     else if (msg.type === 'planning_settings_updated') {
       if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
       fetchPlanningSettings();
-    } else if (msg.type === 'itinerary_ready' || msg.type === 'itinerary_confirmed') fetchLatestItinerary();
+    } else if (msg.type === 'itinerary_confirmed') {
+      if (state.currentTrip) state.currentTrip.status = 'confirmed';
+      renderTripInfo();
+      updateFlowUI();
+      refreshMyTrips();
+      fetchLatestItinerary();
+    } else if (msg.type === 'itinerary_ready') fetchLatestItinerary();
     else if (msg.type === 'trip_completed') openTrip(state.tripId);
   };
   ws.onclose = () => {
@@ -911,10 +1088,22 @@ async function addDestination() {
   if (!name) return toast('请输入地点名称', true);
   if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('停留时间应为 5～720 分钟', true);
   try {
-    await api(`/trips/${state.tripId}/destinations`, 'POST', {
+    const created = await api(`/trips/${state.tripId}/destinations`, 'POST', {
       name, address: address || null, lat: state.picked.lat, lng: state.picked.lng,
       expected_stay_min: stay,
     });
+    if (state.pendingImportedFeedback) {
+      const pending = state.pendingImportedFeedback;
+      await recordParseFeedback(pending.item, 'edited', placeFeedbackSnapshot({
+        ...created, city: pending.item.city || null, resolution_source: 'manual_map_confirmation',
+      }));
+      clearCommentAssignmentsForCandidate(pending.item.parse_candidate_id);
+      state.importedCandidates = state.importedCandidates.filter(
+        item => item.parse_candidate_id !== pending.item.parse_candidate_id
+      );
+      state.pendingImportedFeedback = null;
+      renderSharedTextResults();
+    }
     document.getElementById('destinationName').value = '';
     document.getElementById('destinationAddress').value = '';
     toast('想去地点已添加');
@@ -1053,6 +1242,10 @@ function renderDestinations() {
     const feedback = state.feedbackByDestination[d.id];
     const summary = feedback?.summary;
     const mine = feedback?.my_feedback;
+    const recommendation = d.recommendation;
+    const recommendationHtml = recommendation?.active && recommendation.reasons?.length
+      ? `<div class="log">${recommendation.rank ? `个性化候选 #${Number(recommendation.rank)} · ` : ''}偏好加分 ${Number(recommendation.preference_adjustment).toFixed(2)}：${recommendation.reasons.map(escapeHtml).join('；')}</div>`
+      : '';
     const feedbackHtml = isCompleted ? `<div class="muted" style="margin-top:6px">${summary?.rating_count
       ? `成员评分 ${Number(summary.average_rating).toFixed(1)} / 5（${Number(summary.rating_count)}人）`
       : '暂无成员评分'}${mine ? ` · 我的评分 ${mine.rating ?? '未评分'}${mine.comment ? ` · ${escapeHtml(mine.comment)}` : ''}` : ''}</div>
@@ -1066,6 +1259,7 @@ function renderDestinations() {
     return `<div class="destination-card">
       <div class="destination-title"><span>📌 ${escapeHtml(d.name)}</span>${statusControl}</div>
       <div class="muted">${escapeHtml(d.address || '地图选点')} · 停留 ${Number(d.expected_stay_min)} 分钟 · ${escapeHtml(d.submitted_by.name)} 添加</div>
+      ${recommendationHtml}
       <div class="destination-actions">
         ${isActive ? `<button class="vote-btn ${vote.my_vote === 1 ? 'active-up' : ''}" onclick="voteDestination(${Number(d.id)}, 1)">👍 ${vote.up}</button>
         <button class="vote-btn ${vote.my_vote === -1 ? 'active-down' : ''}" onclick="voteDestination(${Number(d.id)}, -1)">👎 ${vote.down}</button>` : ''}
@@ -1082,16 +1276,28 @@ function renderDestinations() {
 async function parseSharedText() {
   if (!state.tripId) return toast('请先创建或加入 trip', true);
   const text = document.getElementById('sharedText').value.trim();
+  const commentsText = document.getElementById('commentsText').value.trim();
   const stay = Number(document.getElementById('importStay').value);
   if (text.length < 2) return toast('请粘贴包含地点的分享文本', true);
   if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('默认停留时间应为 5～720 分钟', true);
+  state.llmUsage = null;
   try {
     const result = await api(`/trips/${state.tripId}/shared-text/parse`, 'POST', {
       text, default_stay_min: stay,
       use_llm: document.getElementById('useLlmParser').checked,
       preferred_city: state.currentCity || document.getElementById('cityInput').value.trim() || null,
+      comments_text: commentsText || null,
+      source_platform: document.getElementById('sourcePlatform').value,
     });
-    state.importedCandidates = result.candidates || [];
+    state.parseSessionId = result.parse_session_id || null;
+    state.parseParser = result.parser || '';
+    state.pendingImportedFeedback = null;
+    state.importedCandidates = (result.candidates || []).map(item => ({
+      ...item, _proposedPlace: placeFeedbackSnapshot(item), _wasEdited: false,
+    }));
+    state.llmUsage = result.llm_requested ? result.llm_usage : null;
+    state.commentSummary = result.comment_summary || null;
+    state.commentAssignments = {};
     renderSharedTextResults();
     (result.warnings || []).forEach(message => toast(message, true));
     if (state.importedCandidates.length) {
@@ -1104,10 +1310,37 @@ async function parseSharedText() {
 function renderSharedTextResults() {
   const el = document.getElementById('sharedTextResults');
   if (!el) return;
-  if (!state.importedCandidates.length) { el.innerHTML = ''; return; }
-  el.innerHTML = state.importedCandidates.map((item, index) => {
+  const usage = state.llmUsage;
+  const commentSummary = state.commentSummary;
+  const commentHtml = commentSummary?.comment_count ? `<div class="destination-card">
+    <div class="destination-title">评论观点汇总（${Number(commentSummary.comment_count)} 个楼层，${Number(commentSummary.reply_count || 0)} 条回复）</div>
+    ${(commentSummary.topics || []).map(topic => `<div class="muted"><b>${escapeHtml(topic.topic)}</b>：提及 ${Number(topic.mentions)} 次，正向 ${Number(topic.positive)}，负向 ${Number(topic.negative)}，中性/混合 ${Number(topic.mixed_or_neutral)}</div>
+      ${(topic.samples || []).map(sample => `<div class="log">“${escapeHtml(sample)}”</div>`).join('')}`).join('') || '<div class="log">未匹配到首版支持的观点主题</div>'}
+    <div class="log">评论是用户观点汇总，不代表已核实的地点事实。</div>
+    ${(commentSummary.threads || []).slice(0, 10).map((thread, index) => {
+      const selectedCandidate = assignedCandidateId(thread);
+      const options = state.importedCandidates.map(item => `<option value="${escapeHtml(item.parse_candidate_id)}" ${selectedCandidate === item.parse_candidate_id ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
+      return `<details style="margin-top:6px"><summary>楼层 ${index + 1} · ${Number(thread.reply_count || 0)} 条回复 · ${escapeHtml((thread.topics || []).join('、') || '未分类')}</summary>
+        <div class="log">${escapeHtml(thread.comment)}</div>${(thread.replies || []).map(reply => `<div class="muted">↳ ${escapeHtml(reply)}</div>`).join('')}
+        <label class="muted">关联地点 <select onchange="assignCommentThread('${escapeHtml(thread.thread_id)}', this.value)"><option value="">不关联</option>${options}</select></label>
+      </details>`;
+    }).join('')}
+  </div>` : '';
+  const usageHtml = usage ? `<div class="destination-card">
+    <div class="destination-title">AI 用量</div>
+    <div class="muted">输入 ${Number(usage.input_tokens)} · 输出 ${Number(usage.output_tokens)} · 合计 ${Number(usage.total_tokens)} tokens</div>
+    <div class="muted">缓存命中 ${Number(usage.cache_hit_tokens)} · 未命中 ${Number(usage.cache_miss_tokens)} · 命中率 ${(Number(usage.cache_hit_rate) * 100).toFixed(1)}%</div>
+    ${Number(usage.cache_hit_tokens) === 0 ? '<div class="log">本次未命中缓存；首次请求、文本较短或请求前缀发生变化时均属正常。</div>' : ''}
+  </div>` : '';
+  if (!state.importedCandidates.length) { el.innerHTML = usageHtml + commentHtml; return; }
+  el.innerHTML = usageHtml + commentHtml + state.importedCandidates.map((item, index) => {
     const located = Number.isFinite(item.lat) && Number.isFinite(item.lng);
     const details = [item.category, item.price, item.reason].filter(Boolean).map(escapeHtml).join(' · ');
+    const placeComments = effectivePlaceComments(item);
+    const placeCommentsHtml = placeComments ? `<details style="margin-top:6px"><summary>与此地点明确关联的评论：${Number(placeComments.matched_thread_count)} 个楼层，${Number(placeComments.reply_count)} 条回复</summary>
+      <div class="muted">主题：${Object.entries(placeComments.topic_counts || {}).map(([topic, count]) => `${escapeHtml(topic)} ${Number(count)} 次`).join('、') || '未分类'}</div>
+      ${(placeComments.threads || []).map(thread => `<div class="log">“${escapeHtml(thread.comment)}”${thread.reply_count ? `（${Number(thread.reply_count)} 条回复）` : ''}</div>`).join('')}
+      <div class="log">仅关联明确写出地点名称的评论。</div></details>` : '';
     const locationChoices = (item.location_candidates || []).map((place, placeIndex) =>
       `<button class="vote-btn" onclick="selectImportedLocation(${index}, ${placeIndex})">${escapeHtml(place.name)} · ${escapeHtml(place.district || place.city || '')} · ${escapeHtml(place.address || '')}</button>`
     ).join('');
@@ -1115,13 +1348,57 @@ function renderSharedTextResults() {
       <div class="destination-title">${escapeHtml(item.name)}</div>
       <div class="muted">${escapeHtml(item.address || '未提取到地址')} · 停留 ${Number(item.expected_stay_min)} 分钟</div>
       ${details ? `<div class="muted">${details}</div>` : ''}
+      ${placeCommentsHtml}
       <div class="${located ? 'log' : 'err'}">${located ? `已定位：${Number(item.lng).toFixed(6)}, ${Number(item.lat).toFixed(6)}${item.resolution_source === 'amap_share_url' ? '（高德分享位置）' : ''}` : '无法可靠定位，需要手动地图选点'}</div>
       ${!located && locationChoices ? `<div class="log">请选择具体门店：</div><div class="destination-actions">${locationChoices}</div>` : ''}
       <div class="destination-actions">
         ${located ? `<button onclick="addImportedDestination(${index})">确认并加入地点</button>` : `<button onclick="copyImportedToManual(${index})">转到手动选点</button>`}
+        <button class="vote-btn" onclick="rejectImportedDestination(${index})">忽略此候选</button>
       </div>
     </div>`;
   }).join('');
+}
+
+function autoAssignedCandidateId(threadId) {
+  const item = state.importedCandidates.find(candidate =>
+    (candidate.comment_insights?.threads || []).some(thread => thread.thread_id === threadId)
+  );
+  return item?.parse_candidate_id || '';
+}
+
+function assignedCandidateId(thread) {
+  return Object.prototype.hasOwnProperty.call(state.commentAssignments, thread.thread_id)
+    ? state.commentAssignments[thread.thread_id]
+    : autoAssignedCandidateId(thread.thread_id);
+}
+
+function assignCommentThread(threadId, candidateId) {
+  state.commentAssignments[threadId] = candidateId;
+  renderSharedTextResults();
+  toast(candidateId ? '评论楼层归属已调整' : '评论楼层已设为不关联');
+}
+
+function clearCommentAssignmentsForCandidate(candidateId) {
+  Object.entries(state.commentAssignments).forEach(([threadId, assignedId]) => {
+    if (assignedId === candidateId) delete state.commentAssignments[threadId];
+  });
+}
+
+function effectivePlaceComments(item) {
+  const threads = (state.commentSummary?.threads || []).filter(
+    thread => assignedCandidateId(thread) === item.parse_candidate_id
+  );
+  if (!threads.length) return null;
+  const topicCounts = {};
+  threads.forEach(thread => (thread.topics || []).forEach(topic => {
+    topicCounts[topic] = (topicCounts[topic] || 0) + 1;
+  }));
+  return {
+    matched_thread_count: threads.length,
+    reply_count: threads.reduce((total, thread) => total + Number(thread.reply_count || 0), 0),
+    topic_counts: topicCounts,
+    threads,
+  };
 }
 
 function selectImportedLocation(itemIndex, placeIndex) {
@@ -1133,6 +1410,7 @@ function selectImportedLocation(itemIndex, placeIndex) {
     category: place.category || item.category, lat: Number(place.lat), lng: Number(place.lng),
     formatted_address: place.address || '', resolved: true,
     resolution_error: null, resolution_source: 'poi_confirmed',
+    _wasEdited: true,
   });
   renderSharedTextResults();
   setPickedLocation(Number(place.lat), Number(place.lng), { address: place.address || place.name, center: true });
@@ -1143,16 +1421,65 @@ async function addImportedDestination(index) {
   const item = state.importedCandidates[index];
   if (!item || !Number.isFinite(item.lat) || !Number.isFinite(item.lng)) return;
   try {
-    await api(`/trips/${state.tripId}/destinations`, 'POST', {
+    const created = await api(`/trips/${state.tripId}/destinations`, 'POST', {
       name: item.name, address: item.address || null, lat: item.lat, lng: item.lng,
       category: item.category || null, expected_stay_min: item.expected_stay_min,
       note: [item.reason, item.price ? `人均：${item.price}` : '', item.source_url ? `来源：${item.source_url}` : ''].filter(Boolean).join('；') || null,
     });
+    await recordParseFeedback(
+      item, item._wasEdited ? 'edited' : 'accepted',
+      placeFeedbackSnapshot({...created, city: item.city || null, resolution_source: item.resolution_source || null}),
+    );
+    clearCommentAssignmentsForCandidate(item.parse_candidate_id);
     state.importedCandidates.splice(index, 1);
     renderSharedTextResults();
     await refreshDestinations();
     toast('地点已作为候选加入');
   } catch (e) { toast(e.message, true); }
+}
+
+function placeFeedbackSnapshot(item) {
+  return {
+    name: String(item.name || '').slice(0, 120),
+    address: item.address ? String(item.address).slice(0, 300) : null,
+    city: item.city ? String(item.city).slice(0, 30) : null,
+    category: item.category ? String(item.category).slice(0, 80) : null,
+    lat: Number.isFinite(Number(item.lat)) ? Number(item.lat) : null,
+    lng: Number.isFinite(Number(item.lng)) ? Number(item.lng) : null,
+    expected_stay_min: Number.isInteger(Number(item.expected_stay_min)) ? Number(item.expected_stay_min) : null,
+    resolution_source: item.resolution_source ? String(item.resolution_source).slice(0, 40) : null,
+  };
+}
+
+async function recordParseFeedback(item, action, finalPlace = null) {
+  if (!state.parseSessionId || !item?.parse_candidate_id) return;
+  try {
+    await api(`/trips/${state.tripId}/place-parse-feedback`, 'POST', {
+      parse_session_id: state.parseSessionId,
+      candidate_id: item.parse_candidate_id,
+      parser: state.parseParser || 'unknown',
+      action,
+      proposed_place: item._proposedPlace || placeFeedbackSnapshot(item),
+      final_place: finalPlace,
+      consent_to_improve: false,
+    });
+  } catch (e) {
+    console.error('[recordParseFeedback] 记录失败:', e);
+    toast(`地点操作已完成，但质量反馈记录失败：${e.message}`, true);
+  }
+}
+
+async function rejectImportedDestination(index) {
+  const item = state.importedCandidates[index];
+  if (!item) return;
+  await recordParseFeedback(item, 'rejected');
+  clearCommentAssignmentsForCandidate(item.parse_candidate_id);
+  state.importedCandidates.splice(index, 1);
+  if (state.pendingImportedFeedback?.item?.parse_candidate_id === item.parse_candidate_id) {
+    state.pendingImportedFeedback = null;
+  }
+  renderSharedTextResults();
+  toast('已忽略该候选');
 }
 
 function copyImportedToManual(index) {
@@ -1161,6 +1488,7 @@ function copyImportedToManual(index) {
   document.getElementById('destinationName').value = item.name || '';
   document.getElementById('destinationAddress').value = item.address || '';
   document.getElementById('destinationStay').value = item.expected_stay_min || 60;
+  state.pendingImportedFeedback = { item };
   toast('已填入地点表单，请在地图上精确选择入口后添加');
 }
 
@@ -1287,6 +1615,7 @@ async function confirmItinerary(planId) {
       accept_estimated_routes: acceptEstimatedRoutes,
     });
     if (state.currentTrip) state.currentTrip.status = 'confirmed';
+    renderTripInfo();
     renderItinerary();
     updateFlowUI();
     refreshMyTrips();
@@ -1750,6 +2079,7 @@ renderUser();
 updatePickedStatus();
 state.currentCity = localStorage.getItem('preferredMapCity') || '';
 document.getElementById('cityInput').value = state.currentCity;
+restoreSession();
 loadMap();
 </script>
 </body>

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.schemas import DestinationCreate, DestinationFeedbackUpdate, Location, LoginRequest, ParticipantUpdate, SharedTextParseRequest, TripWorkflowUpdate, VoteRequest
+from app.schemas import DestinationCreate, DestinationFeedbackUpdate, Location, LoginRequest, ParticipantUpdate, PlaceParseFeedbackCreate, SharedTextParseRequest, TripWorkflowUpdate, UserPreferencesUpdate, VoteRequest
 from app.models import TripVote
 from app.routers.votes import aggregate_votes
 from app.routers.shared_text import _infer_city, _normalized_place_name
@@ -15,7 +15,9 @@ from app.services.amap import AmapClient
 from app.services.access import require_trip_active, require_trip_member
 from app.services.itinerary import plan_itinerary
 from app.services.llm_parser import LlmPlaceParser
-from app.services.shared_text import parse_shared_text
+from app.services.preferences import build_derived_preferences, personalize_destinations
+from app.services.shared_text import associate_comments_to_candidates, parse_shared_text, summarize_comments
+from app.services.source_adapters import adapt_source_text
 
 
 class MeetingPointTests(unittest.IsolatedAsyncioTestCase):
@@ -295,6 +297,52 @@ class AmapTransitTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SchemaTests(unittest.TestCase):
+    def test_user_preferences_are_bounded_and_deduplicated(self):
+        prefs = UserPreferencesUpdate(
+            personalization_enabled=False,
+            explicit={"preferred_transport_modes": ["transit"], "preferred_categories": ["博物馆"]},
+        )
+        self.assertFalse(prefs.personalization_enabled)
+        with self.assertRaises(ValidationError):
+            UserPreferencesUpdate(explicit={"preferred_categories": ["公园", "公园"]})
+
+    def test_place_parse_feedback_accepts_only_sanitized_place_fields(self):
+        request = PlaceParseFeedbackCreate(
+            parse_session_id="12345678-1234-5678-1234-567812345678",
+            candidate_id="87654321-4321-8765-4321-876543218765",
+            parser="rules_v1+llm_v1", action="edited",
+            proposed_place={"name": "测试店", "city": "广州", "lat": 23.1, "lng": 113.2},
+            final_place={"name": "测试店（天河店）", "city": "广州", "lat": 23.2, "lng": 113.3},
+        )
+        self.assertEqual(request.action, "edited")
+        with self.assertRaises(ValidationError):
+            PlaceParseFeedbackCreate(
+                parse_session_id="12345678-1234-5678-1234-567812345678",
+                candidate_id="87654321-4321-8765-4321-876543218765",
+                parser="rules_v1", action="accepted",
+                proposed_place={"name": "测试店", "raw_text": "不应保存的原始聊天"},
+                final_place={"name": "测试店"},
+            )
+
+    def test_rejected_parse_feedback_cannot_include_final_place(self):
+        with self.assertRaises(ValidationError):
+            PlaceParseFeedbackCreate(
+                parse_session_id="12345678-1234-5678-1234-567812345678",
+                candidate_id="87654321-4321-8765-4321-876543218765",
+                parser="rules_v1", action="rejected",
+                proposed_place={"name": "误识别地点"}, final_place={"name": "不应存在"},
+            )
+
+    def test_parse_feedback_cannot_opt_into_training_before_consent_flow_exists(self):
+        with self.assertRaises(ValidationError):
+            PlaceParseFeedbackCreate(
+                parse_session_id="12345678-1234-5678-1234-567812345678",
+                candidate_id="87654321-4321-8765-4321-876543218765",
+                parser="rules_v1", action="accepted",
+                proposed_place={"name": "测试店"}, final_place={"name": "测试店"},
+                consent_to_improve=True,
+            )
+
     def test_phone_must_be_mainland_mobile_number(self):
         LoginRequest(phone="13800000000")
         with self.assertRaises(ValidationError):
@@ -358,7 +406,118 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(request.preferred_city, "广州市")
 
 
+class PreferenceTests(unittest.TestCase):
+    def test_personalization_is_bounded_explainable_and_does_not_reorder_data(self):
+        destinations = [
+            {"id": 2, "category": "公园", "visit_status": "candidate", "votes": {"up": 2, "down": 0}},
+            {"id": 1, "category": "博物馆", "visit_status": "candidate", "votes": {"up": 2, "down": 0}},
+            {"id": 3, "category": "博物馆", "visit_status": "must_visit", "votes": {"up": 0, "down": 0}},
+        ]
+        result = personalize_destinations(destinations, {
+            "personalization_enabled": True,
+            "explicit": {"preferred_categories": ["博物馆"]},
+            "derived": {
+                "recommendation_ready": True,
+                "category_scores": {"博物馆": 5.0, "公园": 2.5},
+            },
+        })
+        self.assertEqual([item["id"] for item in result], [2, 1, 3])
+        self.assertEqual(result[1]["recommendation"]["rank"], 1)
+        self.assertLessEqual(result[1]["recommendation"]["preference_adjustment"], 0.5)
+        self.assertTrue(result[1]["recommendation"]["reasons"])
+        self.assertIsNone(result[2]["recommendation"]["rank"])
+
+    def test_personalization_disabled_or_insufficient_keeps_vote_score(self):
+        destination = {"id": 1, "category": "博物馆", "visit_status": "candidate", "votes": {"up": 2, "down": 1}}
+        for preferences in (
+            {"personalization_enabled": False, "derived": {"recommendation_ready": True}},
+            {"personalization_enabled": True, "derived": {"recommendation_ready": False}},
+            None,
+        ):
+            recommendation = personalize_destinations([destination], preferences)[0]["recommendation"]
+            self.assertFalse(recommendation["active"])
+            self.assertEqual(recommendation["score"], 1.0)
+            self.assertEqual(recommendation["preference_adjustment"], 0.0)
+            self.assertIsNone(recommendation["rank"])
+
+    def test_derived_preferences_are_explainable_and_need_three_samples(self):
+        rows = [
+            {"visited": True, "category": "博物馆", "rating": 5, "actual_stay_min": 120, "tags": ["人多拥挤"]},
+            {"visited": True, "category": "博物馆", "rating": 4, "actual_stay_min": 90, "tags": ["人多拥挤"]},
+            {"visited": True, "category": "公园", "rating": 3, "actual_stay_min": 60, "tags": []},
+        ]
+        derived = build_derived_preferences(rows)
+        self.assertEqual(derived["sample_count"], 3)
+        self.assertTrue(derived["recommendation_ready"])
+        self.assertEqual(derived["average_actual_stay_min"]["博物馆"], 105.0)
+        self.assertEqual(derived["avoid_tags"], ["人多拥挤"])
+        self.assertGreater(derived["category_scores"]["博物馆"], derived["category_scores"]["公园"])
+
+    def test_unvisited_feedback_is_not_used(self):
+        derived = build_derived_preferences([
+            {"visited": False, "category": "餐厅", "rating": 1, "actual_stay_min": 20, "tags": ["交通不便"]},
+        ])
+        self.assertEqual(derived["sample_count"], 0)
+        self.assertEqual(derived["category_scores"], {})
+        self.assertFalse(derived["recommendation_ready"])
+
+
 class SharedTextTests(unittest.TestCase):
+    def test_xiaohongshu_manual_export_adapter_normalizes_comment_noise(self):
+        imported = adapt_source_text(
+            "xiaohongshu", "广州探店\u200b\r\n\r\n\r\n美奈小馆",
+            "评论：味道不错\n展开 6 条回复\n作者回复：今天有点偏甜\n点赞 12",
+        )
+        self.assertEqual(imported["text"], "广州探店\n\n美奈小馆")
+        self.assertEqual(imported["comments"], "评论:味道不错\n回复：今天有点偏甜")
+        self.assertEqual(imported["adapter"], "xiaohongshu_manual_export_v1")
+        self.assertTrue(imported["warnings"])
+
+    def test_dianping_and_meituan_business_replies_are_normalized(self):
+        for platform in ("dianping", "meituan"):
+            imported = adapt_source_text(platform, "餐厅正文", "评论：服务一般\n商家回复:感谢反馈")
+            self.assertEqual(imported["comments"], "评论:服务一般\n回复：感谢反馈")
+
+    def test_comment_summary_keeps_opinions_separate_and_counts_topics(self):
+        summary = summarize_comments(
+            "味道很好吃，值得再去\n今天偏甜，有点失望\n营业时间不固定，去晚了会扑空\n地铁很方便"
+        )
+        self.assertEqual(summary["comment_count"], 4)
+        topics = {item["topic"]: item for item in summary["topics"]}
+        self.assertEqual(topics["口味"]["mentions"], 2)
+        self.assertGreaterEqual(topics["口味"]["positive"], 1)
+        self.assertGreaterEqual(topics["口味"]["negative"], 1)
+        self.assertEqual(topics["营业稳定性"]["mentions"], 1)
+
+    def test_comment_threads_keep_replies_attached_to_parent(self):
+        summary = summarize_comments(
+            "评论：味道很好吃，但排队有点久\n回复：周末等位一小时\n回复：工作日不用排队\n评论：地铁很方便"
+        )
+        self.assertEqual(summary["comment_count"], 2)
+        self.assertEqual(summary["reply_count"], 2)
+        self.assertEqual(summary["threads"][0]["reply_count"], 2)
+        self.assertEqual(summary["threads"][0]["thread_id"], "thread-1")
+        self.assertIn("口味", summary["threads"][0]["topics"])
+        self.assertIn("排队拥挤", summary["threads"][0]["topics"])
+        self.assertEqual(summary["threads"][1]["reply_count"], 0)
+
+    def test_comments_only_link_when_place_name_is_explicit(self):
+        summary = summarize_comments(
+            "评论：美奈小馆味道不错\n回复：但今天偏甜\n评论：第一家营业时间不固定"
+        )
+        candidates = associate_comments_to_candidates(summary, [
+            {"name": "美奈小馆（天河店）"}, {"name": "Ginkao Bangkok"},
+        ])
+        self.assertEqual(candidates[0]["comment_insights"]["matched_thread_count"], 1)
+        self.assertNotIn("comment_insights", candidates[1])
+
+    def test_shared_text_request_accepts_separate_comments_and_platform(self):
+        request = SharedTextParseRequest(
+            text="广州餐厅", comments_text="第一条评论\n第二条评论", source_platform="xiaohongshu"
+        )
+        self.assertEqual(request.source_platform, "xiaohongshu")
+        self.assertIn("第一条", request.comments_text)
+
     def test_city_context_and_place_name_normalization(self):
         text = "在广州吃了好多家，第一家是 ginkao bangkok，第二家是美奈小馆。"
         self.assertEqual(_infer_city(text), "广州")
@@ -385,6 +544,27 @@ class SharedTextTests(unittest.TestCase):
 
 
 class LlmPlaceParserTests(unittest.TestCase):
+    def test_deepseek_openai_usage_includes_cache_hit_and_miss(self):
+        usage = LlmPlaceParser.extract_usage({"usage": {
+            "prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150,
+            "prompt_cache_hit_tokens": 80, "prompt_cache_miss_tokens": 40,
+        }})
+        self.assertEqual(usage["input_tokens"], 120)
+        self.assertEqual(usage["cache_hit_tokens"], 80)
+        self.assertEqual(usage["cache_miss_tokens"], 40)
+        self.assertEqual(usage["cache_hit_rate"], 0.6667)
+
+    def test_anthropic_usage_and_missing_usage_are_supported(self):
+        usage = LlmPlaceParser.extract_usage({"usage": {
+            "input_tokens": 100, "output_tokens": 20,
+            "cache_read_input_tokens": 25, "cache_creation_input_tokens": 10,
+        }})
+        self.assertEqual(usage["total_tokens"], 120)
+        self.assertEqual(usage["cache_hit_tokens"], 25)
+        self.assertEqual(usage["cache_miss_tokens"], 75)
+        self.assertEqual(usage["cache_creation_tokens"], 10)
+        self.assertIsNone(LlmPlaceParser.extract_usage({"content": []}))
+
     def test_anthropic_protocol_is_detected_and_text_blocks_are_joined(self):
         parser = LlmPlaceParser()
         parser.base_url = "https://api.deepseek.com/anthropic"

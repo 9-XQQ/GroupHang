@@ -1,6 +1,7 @@
 """Phase 3：分享文本解析与地点消歧。"""
 import asyncio
 import re
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +13,8 @@ from ..security import get_current_user
 from ..services.access import require_trip_member
 from ..services.amap import amap
 from ..services.llm_parser import llm_place_parser
-from ..services.shared_text import parse_shared_text
+from ..services.shared_text import associate_comments_to_candidates, parse_shared_text, summarize_comments
+from ..services.source_adapters import adapt_source_text
 
 router = APIRouter(prefix="/trips/{trip_id}/shared-text", tags=["shared-text"])
 
@@ -35,12 +37,18 @@ async def parse_text(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
-    result = parse_shared_text(body.text, body.default_stay_min)
+    imported = adapt_source_text(body.source_platform, body.text, body.comments_text)
+    result = parse_shared_text(imported["text"], body.default_stay_min)
+    result["warnings"].extend(imported["warnings"])
+    comment_summary = summarize_comments(imported["comments"])
     llm_candidates = []
     llm_used = False
     llm_error = None
     if body.use_llm:
-        llm_candidates, llm_error = await llm_place_parser.parse(body.text)
+        llm_input = imported["text"]
+        if imported["comments"]:
+            llm_input += "\n\n【用户粘贴的评论，仅用于提取评论中明确提到的地点】\n" + imported["comments"]
+        llm_candidates, llm_error = await llm_place_parser.parse(llm_input)
         llm_used = bool(llm_candidates)
 
     async def resolve_link(url: str) -> tuple[dict | None, str | None]:
@@ -117,7 +125,14 @@ async def parse_text(
     if resolved:
         warnings = [warning for warning in warnings if not warning.startswith("没有识别到地点")]
     parser = "rules_v1+amap_share_v1" + ("+llm_v1" if llm_used else "")
+    parse_session_id = str(uuid4())
+    linked_candidates = associate_comments_to_candidates(comment_summary, resolved[:10])
+    candidates = [{**candidate, "parse_candidate_id": str(uuid4())} for candidate in linked_candidates]
     return {
-        **result, "candidates": resolved[:10], "warnings": warnings, "parser": parser,
+        **result, "candidates": candidates, "warnings": warnings, "parser": parser,
+        "parse_session_id": parse_session_id,
+        "source_platform": body.source_platform, "comment_summary": comment_summary,
+        "source_adapter": imported["adapter"],
         "llm_requested": body.use_llm, "llm_used": llm_used,
+        "llm_usage": llm_place_parser.last_usage if body.use_llm else None,
     }

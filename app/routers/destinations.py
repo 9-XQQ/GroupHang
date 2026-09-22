@@ -8,6 +8,7 @@ from ..models import Trip, TripDestination, TripVote, User
 from ..schemas import DestinationCreate, DestinationStatusUpdate, DestinationUpdate
 from ..security import get_current_user
 from ..services.access import require_trip_active, require_trip_member
+from ..services.preferences import personalize_destinations
 from ..services.ws import manager
 
 router = APIRouter(prefix="/trips/{trip_id}/destinations", tags=["destinations"])
@@ -117,16 +118,17 @@ async def list_destinations(
         user_result = await db.execute(select(User).where(User.id.in_(submitter_ids)))
         users = {row.id: row for row in user_result.scalars().all()}
 
+    serialized = [
+        _destination_dict(
+            destination,
+            users.get(destination.submitted_by),
+            vote_map.get(str(destination.id), {"up": 0, "down": 0, "my_vote": 0}),
+        )
+        for destination in destinations
+    ]
     return {
         "input_version": trip.input_version if trip else 1,
-        "destinations": [
-            _destination_dict(
-                destination,
-                users.get(destination.submitted_by),
-                vote_map.get(str(destination.id), {"up": 0, "down": 0, "my_vote": 0}),
-            )
-            for destination in destinations
-        ],
+        "destinations": personalize_destinations(serialized, user.preferences),
     }
 
 

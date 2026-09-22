@@ -13,7 +13,7 @@ from .config import settings
 from .db import engine
 from .services.amap import amap
 from .services.llm_parser import llm_place_parser
-from .routers import auth, destinations, feedback, itineraries, meeting_points, participants, places, shared_text, trips, votes, ws
+from .routers import auth, destinations, diagnostics, feedback, itineraries, meeting_points, participants, place_parse_feedback, places, shared_text, trips, users, votes, ws
 
 
 @asynccontextmanager
@@ -42,6 +42,9 @@ app.include_router(destinations.router)
 app.include_router(feedback.router)
 app.include_router(itineraries.router)
 app.include_router(places.router)
+app.include_router(diagnostics.router)
+app.include_router(place_parse_feedback.router)
+app.include_router(users.router)
 app.include_router(shared_text.router)
 app.include_router(meeting_points.router)
 app.include_router(votes.router)

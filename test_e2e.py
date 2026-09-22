@@ -103,12 +103,12 @@ def main() -> None:
     destination_a = request(
         "POST", f"/trips/{trip_id}/destinations",
         {"name": "故宫", "address": "北京市东城区", "lat": 39.9163, "lng": 116.3972,
-         "expected_stay_min": 120}, token_a,
+         "category": "博物馆", "expected_stay_min": 120}, token_a,
     )
     destination_b = request(
         "POST", f"/trips/{trip_id}/destinations",
         {"name": "什刹海", "address": "北京市西城区", "lat": 39.9416, "lng": 116.3852,
-         "expected_stay_min": 60}, token_b,
+         "category": "景点", "expected_stay_min": 60}, token_b,
     )
     request(
         "PUT", f"/trips/{trip_id}/destinations/{destination_a['id']}/status",
@@ -212,9 +212,19 @@ def main() -> None:
         {"text": "名称：天坛公园\n地址：北京市东城区天坛路甲1号\n品类：景点\n推荐理由：古建筑",
          "default_stay_min": 90}, token_a,
     )
-    if not parsed["candidates"] or parsed["candidates"][0].get("lat") is None:
+    if not parsed["candidates"]:
         raise RuntimeError(f"Phase 3 未能提取并定位地点：{parsed}")
     imported = parsed["candidates"][0]
+    if imported.get("lat") is None:
+        resolution_error = str(imported.get("resolution_error") or "")
+        if any(marker in resolution_error for marker in ("10021", "CUQPS_HAS_EXCEEDED_THE_LIMIT", "配额")):
+            imported = {
+                **imported, "lat": 39.8822, "lng": 116.4066,
+                "resolution_source": "e2e_quota_fallback",
+            }
+            print("      高德配额不可用：地点提取继续验证，真实定位标记为外部服务跳过")
+        else:
+            raise RuntimeError(f"Phase 3 未能定位地点：{parsed}")
     imported_destination = request(
         "POST", f"/trips/{trip_id}/destinations",
         {"name": imported["name"], "address": imported["address"],
@@ -222,6 +232,42 @@ def main() -> None:
          "category": imported["category"] or None,
          "expected_stay_min": imported["expected_stay_min"],
          "note": imported["reason"] or None}, token_a,
+    )
+    parse_feedback = request(
+        "POST", f"/trips/{trip_id}/place-parse-feedback",
+        {
+            "parse_session_id": parsed["parse_session_id"],
+            "candidate_id": imported["parse_candidate_id"],
+            "parser": parsed["parser"], "action": "accepted",
+            "proposed_place": {
+                "name": imported["name"], "address": imported.get("address") or None,
+                "city": imported.get("city") or None, "category": imported.get("category") or None,
+                "lat": imported.get("lat"), "lng": imported.get("lng"),
+                "expected_stay_min": imported.get("expected_stay_min"),
+                "resolution_source": imported.get("resolution_source"),
+            },
+            "final_place": {
+                "name": imported_destination["name"], "address": imported_destination.get("address"),
+                "category": imported_destination.get("category"),
+                "lat": imported_destination["lat"], "lng": imported_destination["lng"],
+                "expected_stay_min": imported_destination["expected_stay_min"],
+                "resolution_source": imported.get("resolution_source"),
+            },
+            "consent_to_improve": False,
+        }, token_a,
+    )
+    if not parse_feedback.get("recorded") or parse_feedback.get("action") != "accepted":
+        raise RuntimeError(f"Phase 4A-3 解析反馈未记录：{parse_feedback}")
+    expect_http_error(
+        422, "POST", f"/trips/{trip_id}/place-parse-feedback",
+        {
+            "parse_session_id": parsed["parse_session_id"],
+            "candidate_id": imported["parse_candidate_id"],
+            "parser": parsed["parser"], "action": "accepted",
+            "proposed_place": {"name": imported["name"]},
+            "final_place": {"name": imported_destination["name"]},
+            "consent_to_improve": True,
+        }, token_a,
     )
     current_destinations = request("GET", f"/trips/{trip_id}/destinations", token=token_a)["destinations"]
     if not any(item["id"] == imported_destination["id"] for item in current_destinations):
@@ -332,6 +378,16 @@ def main() -> None:
             "tags": ["值得再去", "交通方便"], "comment": "创建者私密评价", "would_revisit": True,
         }, token_a,
     )
+    for destination_id, rating, stay in (
+        (destination_b["id"], 3, 70), (imported_destination["id"], 4, 95),
+    ):
+        request(
+            "PUT", f"/trips/{trip_id}/destinations/{destination_id}/feedback/me",
+            {
+                "visited": True, "rating": rating, "actual_stay_min": stay,
+                "tags": [], "comment": None, "would_revisit": True,
+            }, token_a,
+        )
     feedback = request("GET", f"/trips/{trip_id}/feedback", token=token_b)
     destination_feedback = next(
         item for item in feedback["destinations"] if item["destination_id"] == destination_a["id"]
@@ -344,6 +400,61 @@ def main() -> None:
         raise RuntimeError("Phase 4A-2 泄露了其他成员的文字评价")
     print("Phase 4A-2 地点评价、聚合与文字隐私验证通过")
 
+    # Phase 4B：只从本人已完成行程反馈重建偏好，并可关闭、清空。
+    current_preferences = request("GET", "/users/me/preferences", token=token_a)
+    request(
+        "PUT", "/users/me/preferences",
+        {
+            "personalization_enabled": True,
+            "explicit": {
+                **current_preferences["explicit"],
+                "preferred_categories": ["博物馆"],
+                "preferred_transport_modes": ["transit"],
+            },
+        }, token_a,
+    )
+    preferences = request("POST", "/users/me/preferences/rebuild", {}, token_a)
+    if preferences["derived"]["sample_count"] < 3 or not preferences["derived"]["recommendation_ready"]:
+        raise RuntimeError(f"Phase 4B 样本阈值或本人反馈统计错误：{preferences}")
+    personalized = request("GET", f"/trips/{trip_id}/destinations", token=token_a)["destinations"]
+    museum = next(item for item in personalized if item["id"] == destination_a["id"])
+    recommendation = museum.get("recommendation") or {}
+    if not recommendation.get("active") or recommendation.get("preference_adjustment", 0) <= 0:
+        raise RuntimeError(f"Phase 4B 个性化软分数未生效：{recommendation}")
+    if not recommendation.get("reasons"):
+        raise RuntimeError("Phase 4B 个性化推荐缺少可解释原因")
+    if not any("主动选择" in reason for reason in recommendation["reasons"]):
+        raise RuntimeError(f"Phase 4B 显式偏好未进入推荐解释：{recommendation}")
+    emptied_preferences = request(
+        "PUT", "/users/me/preferences",
+        {
+            "personalization_enabled": True,
+            "explicit": {
+                "preferred_categories": [], "preferred_transport_modes": [], "avoid_tags": [],
+            },
+        }, token_a,
+    )
+    if any(emptied_preferences["explicit"].values()):
+        raise RuntimeError(f"Phase 4B 空列表未能清除主动偏好：{emptied_preferences}")
+    persisted_empty = request("GET", "/users/me/preferences", token=token_a)
+    if any(persisted_empty["explicit"].values()):
+        raise RuntimeError(f"Phase 4B 清空主动偏好后重新读取仍有旧值：{persisted_empty}")
+    preferences = request(
+        "PUT", "/users/me/preferences",
+        {"personalization_enabled": False, "explicit": preferences["explicit"]}, token_a,
+    )
+    if preferences["personalization_enabled"]:
+        raise RuntimeError("Phase 4B 个性化关闭失败")
+    cleared = request("DELETE", "/users/me/preferences/derived", token=token_a)
+    if cleared["derived"]["sample_count"] != 0:
+        raise RuntimeError("Phase 4B 派生偏好清空失败")
+    print("Phase 4B 偏好重建、软分数解释、关闭和清空验证通过")
+
+    # Phase 4 数据治理：删除本次测试 Trip，并由数据库外键级联清理评价与解析反馈。
+    request("DELETE", f"/trips/{trip_id}", token=token_a)
+    expect_http_error(404, "GET", f"/trips/{trip_id}", token=token_a)
+    print("Phase 4 Trip 删除与关联数据级联入口验证通过")
+
     # Windows 默认 GBK 控制台无法编码部分 Unicode 符号，保持输出可跨平台执行。
     print("==> 闭环跑通 [OK]")
 
@@ -352,5 +463,5 @@ if __name__ == "__main__":
     try:
         main()
     except RuntimeError as e:
-        print(f"\n✘ 测试失败: {e}")
+        print(f"\n[FAIL] 测试失败: {e}")
         sys.exit(1)

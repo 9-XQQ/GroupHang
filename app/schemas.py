@@ -1,6 +1,7 @@
 """Pydantic 请求/响应模型（v2）。"""
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -9,6 +10,27 @@ FEEDBACK_TAGS = {
     "值得再去", "人多拥挤", "交通方便", "交通不便", "停留太短",
     "停留太长", "适合拍照", "适合亲子", "性价比高",
 }
+
+
+class ExplicitPreferences(BaseModel):
+    preferred_transport_modes: list[Literal["driving", "transit"]] = Field(default_factory=list, max_length=2)
+    preferred_categories: list[str] = Field(default_factory=list, max_length=20)
+    avoid_tags: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("preferred_categories", "avoid_tags")
+    @classmethod
+    def validate_preference_values(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(not value or len(value) > 80 for value in cleaned):
+            raise ValueError("偏好值不能为空且不能超过 80 字")
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("偏好值不能重复")
+        return cleaned
+
+
+class UserPreferencesUpdate(BaseModel):
+    personalization_enabled: bool = True
+    explicit: ExplicitPreferences = Field(default_factory=ExplicitPreferences)
 
 
 class Location(BaseModel):
@@ -106,6 +128,41 @@ class SharedTextParseRequest(BaseModel):
     default_stay_min: int = Field(default=60, ge=5, le=720)
     use_llm: bool = False
     preferred_city: str | None = Field(default=None, max_length=30)
+    comments_text: str | None = Field(default=None, max_length=20000)
+    source_platform: Literal["generic", "xiaohongshu", "dianping", "meituan", "other"] = "generic"
+
+
+class PlaceFeedbackSnapshot(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    address: str | None = Field(default=None, max_length=300)
+    city: str | None = Field(default=None, max_length=30)
+    category: str | None = Field(default=None, max_length=80)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+    expected_stay_min: int | None = Field(default=None, ge=5, le=720)
+    resolution_source: str | None = Field(default=None, max_length=40)
+
+
+class PlaceParseFeedbackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parse_session_id: UUID
+    candidate_id: UUID
+    parser: str = Field(min_length=1, max_length=80)
+    action: Literal["accepted", "edited", "rejected"]
+    proposed_place: PlaceFeedbackSnapshot
+    final_place: PlaceFeedbackSnapshot | None = None
+    consent_to_improve: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_final_place(self):
+        if self.action == "rejected" and self.final_place is not None:
+            raise ValueError("拒绝候选时不能提交最终地点")
+        if self.action != "rejected" and self.final_place is None:
+            raise ValueError("接受或修改候选时必须提交最终地点")
+        return self
 
 
 class PlanningSettingsUpdate(BaseModel):
