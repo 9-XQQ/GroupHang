@@ -6,18 +6,110 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.schemas import DestinationCreate, DestinationFeedbackUpdate, Location, LoginRequest, ParticipantUpdate, PlaceParseFeedbackCreate, SharedTextParseRequest, TripWorkflowUpdate, UserPreferencesUpdate, VoteRequest
+from app.schemas import DestinationCreate, DestinationFeedbackUpdate, DestinationUpdate, Location, LoginRequest, ParticipantUpdate, PlaceParseFeedbackCreate, SharedTextParseRequest, TripWorkflowUpdate, UserPreferencesUpdate, VoteRequest
 from app.models import TripVote
 from app.routers.votes import aggregate_votes
 from app.routers.shared_text import _infer_city, _normalized_place_name
 from app.services import itinerary, meeting_point
 from app.services.amap import AmapClient
 from app.services.access import require_trip_active, require_trip_member
+from app.services.agent_assistant import AgentAction, AgentAssistant, AgentModelAnswer
 from app.services.itinerary import plan_itinerary
 from app.services.llm_parser import LlmPlaceParser
 from app.services.preferences import build_derived_preferences, personalize_destinations
 from app.services.shared_text import associate_comments_to_candidates, parse_shared_text, summarize_comments
 from app.services.source_adapters import adapt_source_text
+
+
+class AgentAssistantTests(unittest.TestCase):
+    def test_action_requires_complete_timezone_aware_window(self):
+        with self.assertRaises(ValidationError):
+            AgentAction(
+                type="update_planning_settings",
+                planned_start_at=datetime(2026, 10, 2, 10, 0),
+                planned_end_at=datetime(2026, 10, 2, 18, 0),
+            )
+        action = AgentAction(
+            type="update_planning_settings",
+            planned_start_at=datetime(2026, 10, 2, 10, 0, tzinfo=timezone(timedelta(hours=8))),
+            planned_end_at=datetime(2026, 10, 2, 18, 0, tzinfo=timezone(timedelta(hours=8))),
+            group_transport_mode="transit", optimization_objective="total_time",
+        )
+        self.assertEqual(action.type, "update_planning_settings")
+
+    def test_proposal_is_bound_to_trip_user_and_consumed_once(self):
+        assistant = AgentAssistant()
+        proposal_id = assistant.store(
+            3, 7, 11, [AgentAction(type="switch_workflow", primary_workflow="itinerary")]
+        )
+        self.assertIsNone(assistant.take(proposal_id, 3, 8))
+        proposal_id = assistant.store(
+            3, 7, 11, [AgentAction(type="switch_workflow", primary_workflow="itinerary")]
+        )
+        proposal = assistant.take(proposal_id, 3, 7)
+        self.assertEqual(proposal.input_version, 11)
+        self.assertIsNone(assistant.take(proposal_id, 3, 7))
+
+    def test_proposal_actions_are_deduplicated_and_safely_ordered(self):
+        assistant = AgentAssistant()
+        proposal_id = assistant.store(3, 7, 11, [
+            AgentAction(type="generate_itinerary"),
+            AgentAction(type="switch_workflow", primary_workflow="itinerary"),
+            AgentAction(type="generate_itinerary"),
+        ])
+        proposal = assistant.take(proposal_id, 3, 7)
+        self.assertEqual(
+            [action["type"] for action in proposal.actions],
+            ["switch_workflow", "generate_itinerary"],
+        )
+
+    def test_model_answer_rejects_unknown_actions(self):
+        with self.assertRaises(ValidationError):
+            AgentModelAnswer.model_validate({
+                "reply": "将直接删除行程", "actions": [{"type": "delete_trip"}],
+            })
+
+    def test_fallback_summary_uses_only_structured_context(self):
+        summary = AgentAssistant.fallback_summary({
+            "trip": {"title": "周末", "status": "active"},
+            "participants": [{"name": "甲"}], "destinations": [{"name": "A"}],
+            "latest_plan": None,
+        })
+        self.assertIn("1 名参与者", summary)
+        self.assertIn("1 个地点", summary)
+
+    def test_explicit_chinese_settings_command_has_deterministic_draft(self):
+        actions = AgentAssistant.infer_actions(
+            "请把多地点路线设置为2026年10月2日北京时间10:00到18:00，共同公交，总时间最短，生成修改草案",
+            {"trip": {"group_transport_mode": "driving", "optimization_objective": "balanced"}},
+        )
+        self.assertEqual([action.type for action in actions], ["switch_workflow", "update_planning_settings"])
+        self.assertEqual(actions[1].planned_start_at.utcoffset(), timedelta(hours=8))
+        self.assertEqual(actions[1].group_transport_mode, "transit")
+        self.assertEqual(actions[1].optimization_objective, "total_time")
+
+    def test_questions_do_not_become_write_actions(self):
+        actions = AgentAssistant.infer_actions(
+            "为什么当前路线是共同公交？请不要修改。",
+            {"trip": {"group_transport_mode": "transit", "optimization_objective": "balanced"}},
+        )
+        self.assertEqual(actions, [])
+
+    def test_place_import_and_route_generation_need_explicit_commands(self):
+        context = {"trip": {"group_transport_mode": "transit", "optimization_objective": "balanced"}}
+        place_actions = AgentAssistant.infer_actions("请解析并添加地点：广州塔和越秀公园", context)
+        self.assertEqual(place_actions[0].type, "prepare_place_import")
+        route_actions = AgentAssistant.infer_actions("请开始规划路线", context)
+        self.assertEqual(route_actions[0].type, "generate_itinerary")
+
+    def test_short_term_history_is_scoped_and_clearable(self):
+        assistant = AgentAssistant()
+        assistant.remember(3, 7, "上一问", "上一答")
+        self.assertEqual(len(assistant.history(3, 7)), 2)
+        self.assertEqual(assistant.history(3, 8), [])
+        self.assertEqual(assistant.history(4, 7), [])
+        assistant.clear_history(3, 7)
+        self.assertEqual(assistant.history(3, 7), [])
 
 
 class MeetingPointTests(unittest.IsolatedAsyncioTestCase):
@@ -91,6 +183,55 @@ class MeetingPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ItineraryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fixed_visit_window_adds_waiting(self):
+        start = datetime(2026, 10, 2, 0, 0, tzinfo=timezone.utc)
+        participants = [{"user_id": 1, "name": "甲", "mode": "driving", "lat": 1, "lng": 1}]
+        destinations = [
+            {"id": 1, "name": "午餐", "lat": 1.01, "lng": 1.01, "expected_stay_min": 30,
+             "visit_status": "must_visit", "opening_hours": None,
+             "visit_window_start": start + timedelta(hours=1), "visit_window_end": start + timedelta(hours=2)},
+            {"id": 2, "name": "公园", "lat": 1.02, "lng": 1.02, "expected_stay_min": 20,
+             "visit_status": "must_visit", "opening_hours": None},
+        ]
+        detail = {"duration_min": 5.0, "distance_km": 1.0, "polyline": [[1, 1], [1.01, 1.01]], "steps": []}
+        with patch.object(itinerary.amap, "route_detail", AsyncMock(return_value=detail)):
+            result = await plan_itinerary(participants, destinations, start, start + timedelta(hours=4), "driving", "total_time")
+        lunch = next(item for item in result["ordered_stops"] if item["destination_id"] == 1)
+        self.assertEqual(lunch["arrival_at"], (start + timedelta(hours=1)).isoformat())
+        self.assertGreater(lunch["wait_min"], 0)
+        self.assertTrue(any(w["code"] == "wait_for_visit_window" for w in result["warnings"]))
+
+    async def test_must_visit_window_conflict_is_not_silently_removed(self):
+        start = datetime(2026, 10, 2, 0, 0, tzinfo=timezone.utc)
+        participants = [{"user_id": 1, "name": "甲", "mode": "driving", "lat": 1, "lng": 1}]
+        destinations = [
+            {"id": 1, "name": "预约", "lat": 1.01, "lng": 1.01, "expected_stay_min": 30,
+             "visit_status": "must_visit", "opening_hours": None,
+             "visit_window_start": start, "visit_window_end": start + timedelta(minutes=20)},
+            {"id": 2, "name": "公园", "lat": 1.02, "lng": 1.02, "expected_stay_min": 20,
+             "visit_status": "must_visit", "opening_hours": None},
+        ]
+        detail = {"duration_min": 5.0, "distance_km": 1.0, "polyline": [[1, 1], [1.01, 1.01]], "steps": []}
+        with patch.object(itinerary.amap, "route_detail", AsyncMock(return_value=detail)):
+            result = await plan_itinerary(participants, destinations, start, start + timedelta(hours=3), "driving", "total_time")
+        self.assertEqual({item["destination_id"] for item in result["ordered_stops"]}, {1, 2})
+        self.assertTrue(any(w["code"] == "destination_time_window_conflict" for w in result["warnings"]))
+
+    async def test_optional_destination_with_impossible_window_is_skipped(self):
+        start = datetime(2026, 10, 2, 0, 0, tzinfo=timezone.utc)
+        participants = [{"user_id": 1, "name": "甲", "mode": "driving", "lat": 1, "lng": 1}]
+        destinations = [
+            {"id": 1, "name": "A", "lat": 1.01, "lng": 1.01, "expected_stay_min": 10, "visit_status": "must_visit", "opening_hours": None},
+            {"id": 2, "name": "B", "lat": 1.02, "lng": 1.02, "expected_stay_min": 10, "visit_status": "must_visit", "opening_hours": None},
+            {"id": 3, "name": "过期预约", "lat": 1.03, "lng": 1.03, "expected_stay_min": 30,
+             "visit_status": "optional", "opening_hours": None,
+             "visit_window_start": start, "visit_window_end": start + timedelta(minutes=10)},
+        ]
+        detail = {"duration_min": 5.0, "distance_km": 1.0, "polyline": [[1, 1], [1.01, 1.01]], "steps": []}
+        with patch.object(itinerary.amap, "route_detail", AsyncMock(return_value=detail)):
+            result = await plan_itinerary(participants, destinations, start, start + timedelta(hours=3), "driving", "total_time")
+        self.assertEqual({item["destination_id"] for item in result["ordered_stops"]}, {1, 2})
+        self.assertTrue(any(w["code"] == "optional_time_window_skipped" for w in result["warnings"]))
     async def test_personal_availability_delays_departure_and_reports_early_end(self):
         start = datetime(2026, 9, 9, 1, 0, tzinfo=timezone.utc)
         participants = [{
@@ -297,6 +438,35 @@ class AmapTransitTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SchemaTests(unittest.TestCase):
+    def test_destination_visit_window_requires_pair_timezone_and_order(self):
+        aware = datetime(2026, 10, 2, 11, 0, tzinfo=timezone(timedelta(hours=8)))
+        with self.assertRaises(ValidationError):
+            DestinationCreate(name="午餐", lat=1, lng=1, visit_window_start=aware)
+        with self.assertRaises(ValidationError):
+            DestinationCreate(
+                name="午餐", lat=1, lng=1,
+                visit_window_start=datetime(2026, 10, 2, 11, 0),
+                visit_window_end=datetime(2026, 10, 2, 12, 0),
+            )
+        with self.assertRaises(ValidationError):
+            DestinationCreate(
+                name="午餐", lat=1, lng=1,
+                visit_window_start=aware, visit_window_end=aware - timedelta(minutes=1),
+            )
+        valid = DestinationCreate(
+            name="午餐", lat=1, lng=1,
+            visit_window_start=aware, visit_window_end=aware + timedelta(hours=1),
+        )
+        self.assertEqual(valid.visit_window_start, aware)
+
+    def test_destination_update_can_clear_both_window_values(self):
+        update = DestinationUpdate(visit_window_start=None, visit_window_end=None)
+        self.assertEqual(
+            update.model_dump(exclude_unset=True),
+            {"visit_window_start": None, "visit_window_end": None},
+        )
+        with self.assertRaises(ValidationError):
+            DestinationUpdate(visit_window_start=None)
     def test_user_preferences_are_bounded_and_deduplicated(self):
         prefs = UserPreferencesUpdate(
             personalization_enabled=False,

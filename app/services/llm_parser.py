@@ -191,6 +191,53 @@ class LlmPlaceParser:
             self._request_stats["failed"] += 1
             return [], f"LLM 解析失败：{type(exc).__name__}"
 
+    async def complete_json(self, system: str, prompt: str) -> tuple[dict | None, str | None]:
+        """执行一次受控 JSON 对话，供 Agent 层复用；调用方仍须做专用 schema 校验。"""
+        self._last_usage.set(None)
+        if not self.available:
+            self._request_stats["unavailable"] += 1
+            return None, "服务端未配置 LLM_API_KEY 或 LLM_MODEL"
+        started_at = time.perf_counter()
+        api_style = self._api_style()
+        self._request_stats["agent_attempted"] += 1
+        try:
+            if api_style == "anthropic":
+                url = f"{self.base_url}/v1/messages"
+                headers = {
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "model": self.model, "max_tokens": 2048, "temperature": 0,
+                    "system": system,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+            else:
+                url = f"{self.base_url}/chat/completions"
+                headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": self.model, "temperature": 0,
+                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                }
+            response = await self._http_client().post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            response_payload = response.json()
+            usage = self.extract_usage(response_payload)
+            self._last_usage.set(usage)
+            self._record_response(usage, api_style, round((time.perf_counter() - started_at) * 1000))
+            content = self._extract_content(response_payload, api_style).strip()
+            fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", content, re.I | re.S)
+            result = json.loads(fenced.group(1) if fenced else content)
+            if not isinstance(result, dict):
+                raise ValueError("JSON 顶层必须是对象")
+            self._request_stats["agent_succeeded"] += 1
+            return result, None
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._request_stats["agent_failed"] += 1
+            return None, f"LLM 助手失败：{type(exc).__name__}"
+
     def _api_style(self) -> str:
         """DeepSeek 等服务把 Anthropic 兼容入口放在 /anthropic 路径下。"""
         return "anthropic" if "/anthropic" in self.base_url.lower().split("?")[0] else "openai"

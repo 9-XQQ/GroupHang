@@ -109,6 +109,8 @@ async def create_itinerary_plan(
         "id": row.id, "name": row.name, "lat": row.lat, "lng": row.lng,
         "expected_stay_min": row.expected_stay_min, "visit_status": row.visit_status,
         "opening_hours": row.opening_hours,
+        "visit_window_start": row.visit_window_start,
+        "visit_window_end": row.visit_window_end,
     } for row in rows]
     result = await plan_itinerary(
         participants, destinations, trip.planned_start_at, trip.planned_end_at,

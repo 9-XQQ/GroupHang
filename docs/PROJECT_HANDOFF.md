@@ -76,8 +76,8 @@ project1/
 │     ├─ llm_parser.py        可选 LLM 地点提取适配器
 │     └─ ws.py                WebSocket 连接管理与广播
 ├─ frontend/index.html        当前全部前端页面、样式和脚本
-├─ migrations/               Alembic 环境与 0001～0007 迁移
-├─ tests/test_phase1.py       56 个 unittest 单元/规则测试
+├─ migrations/               Alembic 环境与 0001～0008 迁移
+├─ tests/test_phase1.py       70 个 unittest 单元/规则测试
 ├─ test_e2e.py               需要已启动服务和 PostgreSQL 的完整 HTTP E2E
 ├─ scripts/evaluate_place_parser.py  规则/LLM 地点解析评测脚本
 ├─ scripts/verify_trip_deleted.py     Trip 及 Phase 4 关联数据级联删除核验
@@ -93,7 +93,7 @@ project1/
 ## 3. 数据库和 Alembic 当前状态
 
 - 数据库：PostgreSQL，异步驱动 `asyncpg`；当前不使用 PostGIS，坐标为 Float/JSONB。
-- 实际执行 `python -m alembic current` 与 `heads` 均返回：`0007_place_parse_feedback (head)`。
+- 实际执行 `python -m alembic current` 与 `heads` 均返回：`0008_destination_visit_window (head)`。
 - 迁移链：
   - `0001_phase1_baseline`：用户、Trip、参与者、约点结果和投票基础表。
   - `0002_phase2a_destinations`：多目的地、规划参数、`input_version`、`trip_destinations`、`itinerary_plans`。
@@ -102,8 +102,9 @@ project1/
   - `0005_destination_feedback`：已完成行程的逐用户地点评价。
   - `0006_trip_primary_workflow`：创建者控制的 Trip 主方案类型。
   - `0007_place_parse_feedback`：解析候选接受、修改和拒绝的脱敏反馈。
+  - `0008_destination_visit_window`：地点级固定到访开始/结束时间及成对约束。
 - 当前主要表：`users`、`trips`、`trip_participants`、`meeting_point_results`、`trip_votes`、`trip_destinations`、`itinerary_plans`、`destination_feedback`、`place_parse_feedback`。
-- 本次 E2E 成功写入了开发数据库中的测试用户和一个新 Trip（测试输出为 `trip_id=2`）；脚本不会自动清理历史测试数据。
+- 最新完整 E2E 使用 `trip_id=27` 并在成功后自动删除；本轮失败遗留的 `trip_id=25` 也已定向删除，未留下本轮测试 Trip。
 - Phase 4A-1/2/3 已新增 `completed_at`、`completed_by`、`destination_feedback` 和 `place_parse_feedback`。
 
 迁移操作：
@@ -163,18 +164,18 @@ python -m alembic upgrade head
 
 ## 7. 已完成的测试
 
-本次（2026-09-21）实际执行：
+本次（2026-09-27）实际执行：
 
 | 检查 | 结果 |
 |---|---|
-| `python -m unittest discover -s tests -v` | 56/56 通过 |
+| `python -m unittest discover -s tests -v` | 70/70 通过 |
 | `python -m compileall -q app tests test_e2e.py scripts` | 通过 |
 | 前端内嵌 JavaScript `new Function` 语法检查 | 通过 |
-| `python -m alembic current` / `heads` | `0007_place_parse_feedback (head)` |
+| `python -m alembic current` / `heads` | `0008_destination_visit_window (head)` |
 | OpenAPI 路径生成 | 7 个 Phase 4 必需路径存在，31 个总路径正常生成 |
 | 启动 Uvicorn 后运行 `python test_e2e.py http://127.0.0.1:8000` | 通过，退出码 0；测试 Trip 已在末尾删除 |
 
-56 个单元测试覆盖：成员/非成员访问、锁定 Trip 禁止修改、schema 校验、高德路线与配额熔断、POI/分享链接、单人多地点、时间约束、路线快照、约点、投票、规则及评论楼层/回复/地点关联、跨平台手动导出适配、两种 LLM 响应及 token/cache usage、解析反馈隐私字段/授权约束、可解释偏好计算和有界软推荐。
+70 个单元测试覆盖：成员/非成员访问、锁定 Trip 禁止修改、schema 校验、高德路线与配额熔断、POI/分享链接、单人多地点、Trip 与地点级时间约束、提前等待、必去/可选时间窗冲突、路线快照、约点、投票、规则及评论楼层/回复/地点关联、跨平台手动导出适配、两种 LLM 响应及 token/cache usage、Agent 草案安全、短期对话历史、解析反馈隐私字段/授权约束、可解释偏好计算和有界软推荐。
 
 E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两名参与者提交不同出发方式、地点协作与权限、多地点规划与确认/重开、分享文本解析并确认加入、约点、投票/取消、Phase 4 生命周期与完成后只读、评价聚合与文字隐私、解析反馈及授权拒绝、显式/派生偏好软分解释/关闭/清空（包括空数组保存后重新读取），以及测试 Trip 删除级联。删除后再由 `scripts/verify_trip_deleted.py` 直接查询六张 Trip 相关表，确认无关联数据残留。脚本遇到高德 `10021` 时会明确跳过真实定位外部断言；最新一次运行真实地点定位、路线和约点 POI 成功。
 
@@ -188,7 +189,9 @@ E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两�
 
 ### 功能与体验限制
 
+- 当前页面是功能验证型原生单页，信息密度、视觉层级、间距、响应式布局和操作反馈尚未形成统一设计系统；下一轮应先做信息架构与交互稿，再拆分单文件前端，避免继续局部打补丁。
 - 路线顺序使用最近邻 + 2-opt 启发式，不保证全局最优；尚未引入 OR-Tools。
+- 地点级固定到访时间窗首版已支持，但目前仅支持单个、最长 24 小时的连续时区时间窗；尚未支持按星期、多段营业时间和跨日复杂规则。
 - `available_until` 目前主要生成警告；尚未支持参与者中途离队、分支路线和个人返程。
 - 营业时间只支持简单的单日 `HH:MM`，复杂星期规则和跨日营业未完整处理。
 - 高德不可用时只能降级估算，不能提供可导航路线；外部 API 的配额、网络和权限仍会影响速度与质量。
@@ -197,6 +200,7 @@ E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两�
 - `GET /trips/{id}` 逐个查询参与者用户，存在 N+1 查询；规模扩大前应改为 join/selectin。
 - Trip 删除为永久删除，无归档或回收站；当前 E2E 会清理本次成功运行创建的 Trip，但历史失败运行可能留下测试数据。
 - 同一账号可多设备/多页面同时在线，这是当前明确允许的开发行为，不应误判为 bug；正式策略尚未确定。
+- 小红书、大众点评和美团当前只支持用户手动粘贴正文/评论，不支持粘贴链接后自动读取平台内容。后续须先验证官方接口、用户授权导出或合规客户端采集方案，不实现绕过登录、验证码或反爬的服务端抓取。
 
 ## 9. 尚未完成的任务
 
@@ -204,15 +208,17 @@ E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两�
 - Phase 4A-2 已完成：已完成 Trip 的地点访问、评分、实际停留、标签和再访意愿反馈。
 - Phase 4A-3 已完成首版：记录地点解析候选被接受/修改/拒绝的脱敏反馈，不保存原始聊天全文；迁移为 `0007_place_parse_feedback`。
 - Phase 4B 已完成：基于本人已完成行程反馈生成可解释偏好，支持显式偏好、查看、关闭、重建和清空；候选地点采用最多 0.5 的个人软加分，不改变核心路线排序。
-- Phase 5：对话式 Agent 编排。LLM 目前只做地点提取，不负责权限、写操作或路线事实计算。
+- Phase 5：对话式 Agent 编排。LLM 目前只是默认关闭的分享文本地点提取增强器，产品存在感很弱；后续应提供明确的调用状态，并逐步加入评论摘要、路线解释、调整建议和自然语言修改草案。权限、事实查询、路线计算和最终写入仍由确定性服务及用户确认控制。
+- Phase 5 当前计划内闭环已完成：支持结构化上下文问答、Phase 4 偏好解释、主方案/规划参数草案、地点文本解析草案和路线生成草案；地点继续经过高德候选与逐项人工确认，最终路线确认仍独立执行。页面展示调用来源与 token。一次性草案绑定 active Trip 的 creator 与输入版本；明确中文指令有窄范围规则兜底，普通问句不会生成写操作。最近 3 轮对话仅在进程内保存 30 分钟并可主动清空，不持久化原文。
 - 正式认证、账号安全、设备/session 管理、HTTPS、审计、备份、数据导出/删除和云端部署。
-- 更复杂的真实时间约束、参与者提前离队/返程、入口级选点、百度分享链接与坐标系转换。
+- 多段/周期/跨日地点时间窗、参与者提前离队/返程、入口级选点、百度分享链接与坐标系转换。
 - 更系统的数据库路由集成测试、前端自动化测试、外部 API mock/契约测试和 CI。
 
 ## 10. 下一阶段开发建议
 
 Phase 4 代码与 HTTP/数据库自动验收已闭环。下一阶段按以下顺序处理：
 
+0. 2026-09-27 新增事项中，账号切换表单清理、地点级固定到访时间窗首版和可感知 LLM 行程助手均已完成。按“Web 初级、微信小程序登录中阶、软件端最终目标”推进：下一核心任务是正式 Web 认证/安全基线，并把账号模型设计为可绑定微信等多个登录提供方；UI 重构暂不优先。社媒链接合规读取仍为调研项，自动导入视接口/授权能力列为 P2。
 1. 已完成首批：统一 Trip 主方案类型与多人客户端语义，隔离共同约点/多地点结果和地图图层，并为约点 Top 3 增加路线步骤与 geometry。
 2. 已完成首版文本地点消歧：使用城市上下文和 POI 多候选，非唯一精确结果必须人工确认。
 3. 已完成高德 `10021` 首版保护：首次超限后进程内熔断 15 分钟，并提供需登录的无敏感信息调用统计；后续仍需持久化预算、缓存和控制台配额监控。
@@ -223,7 +229,6 @@ Phase 4 代码与 HTTP/数据库自动验收已闭环。下一阶段按以下顺
 8. 已完成 Phase 4B 展示、管理和候选软推荐；少于 3 条有效反馈或关闭个性化时不加分，核心路线排序始终不变。
 9. Phase 4 页面首轮人工验收已完成；仍建议后续引入可持续运行的浏览器自动化。Phase 3B 的“用户粘贴正文 + 评论”和手动导出适配首版已完成。
 
-完整反馈和优先级记录在私有文档 `docs_private/2026-09-16-手动测试反馈与优先级.md`。
 
 ## 11. 下一位 Codex Agent 开始工作前必须阅读的文件
 

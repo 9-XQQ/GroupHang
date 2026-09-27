@@ -26,6 +26,8 @@ def _destination_dict(destination: TripDestination, submitter: User | None, vote
         "visit_status": destination.visit_status,
         "expected_stay_min": destination.expected_stay_min,
         "opening_hours": destination.opening_hours,
+        "visit_window_start": destination.visit_window_start,
+        "visit_window_end": destination.visit_window_end,
         "note": destination.note,
         "submitted_by": {
             "user_id": destination.submitted_by,
@@ -71,7 +73,7 @@ async def create_destination(
     destination = TripDestination(
         trip_id=trip_id,
         submitted_by=user.id,
-        **body.model_dump(mode="json"),
+        **body.model_dump(),
     )
     db.add(destination)
     input_version = await _bump_input_version(db, trip_id)
@@ -145,12 +147,12 @@ async def update_destination(
     destination = await _load_destination(db, trip_id, destination_id)
     if participant.role != "creator" and destination.submitted_by != user.id:
         raise HTTPException(status_code=403, detail="只能编辑自己提交的地点")
-    changes = body.model_dump(exclude_unset=True, mode="json")
+    changes = body.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=400, detail="没有可更新的字段")
     structural_fields = {"name", "address", "lat", "lng", "category"}
     if destination.visit_status != "candidate" and structural_fields.intersection(changes):
-        raise HTTPException(status_code=409, detail="已确认地点只能修改停留时间、营业时间和备注；修改位置或名称前请先改回候选")
+        raise HTTPException(status_code=409, detail="已确认地点只能修改停留时间、固定到访时间、营业时间和备注；修改位置或名称前请先改回候选")
     for field, value in changes.items():
         setattr(destination, field, value)
     input_version = await _bump_input_version(db, trip_id)

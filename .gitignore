@@ -77,3 +77,5 @@ Desktop.ini
 # Local project planning and development records
 # Keep repository-facing Markdown such as /README.md trackable.
 /docs_private/
+
+/docs/

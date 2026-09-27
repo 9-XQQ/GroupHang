@@ -103,7 +103,9 @@ def main() -> None:
     destination_a = request(
         "POST", f"/trips/{trip_id}/destinations",
         {"name": "故宫", "address": "北京市东城区", "lat": 39.9163, "lng": 116.3972,
-         "category": "博物馆", "expected_stay_min": 120}, token_a,
+         "category": "博物馆", "expected_stay_min": 120,
+         "visit_window_start": "2026-09-05T14:00:00+08:00",
+         "visit_window_end": "2026-09-05T18:30:00+08:00"}, token_a,
     )
     destination_b = request(
         "POST", f"/trips/{trip_id}/destinations",
@@ -131,6 +133,8 @@ def main() -> None:
     listed_a = next(d for d in destination_list["destinations"] if d["id"] == destination_a["id"])
     if listed_a["visit_status"] != "must_visit" or listed_a["votes"]["up"] != 1:
         raise RuntimeError(f"Phase 2A 地点状态或投票不正确：{listed_a}")
+    if not listed_a.get("visit_window_start") or not listed_a.get("visit_window_end"):
+        raise RuntimeError(f"地点固定到访时间窗未持久化：{listed_a}")
     print("      Phase 2A 地点协作接口验证通过\n")
 
     # 4. 两人各自填出发点 + 出行方式
@@ -339,7 +343,22 @@ def main() -> None:
         {"visited": True, "rating": 5, "tags": []}, token_a,
     )
     request("PUT", f"/trips/{trip_id}/workflow", {"primary_workflow": "itinerary"}, token_a)
-    final_plan = request("POST", f"/trips/{trip_id}/itinerary-plans", {}, token_a)
+    assistant_chat = request(
+        "POST", f"/trips/{trip_id}/assistant/chat",
+        {"message": "请使用当前已经确认的设置生成路线。"}, token_a,
+    )
+    if not assistant_chat.get("proposal_id"):
+        raise RuntimeError(f"Phase 5 未生成路线草案：{assistant_chat}")
+    assistant_execution = request(
+        "POST", f"/trips/{trip_id}/assistant/proposals/execute",
+        {"proposal_id": assistant_chat["proposal_id"]}, token_a,
+    )
+    final_plan = assistant_execution.get("itinerary")
+    if not final_plan or not final_plan.get("plan_id"):
+        raise RuntimeError(f"Phase 5 未通过确认草案生成路线：{assistant_execution}")
+    cleared_history = request("DELETE", f"/trips/{trip_id}/assistant/history", token=token_a)
+    if not cleared_history.get("cleared"):
+        raise RuntimeError("Phase 5 对话历史清空失败")
     request(
         "POST", f"/trips/{trip_id}/itinerary-plans/{final_plan['plan_id']}/confirm",
         {"accept_estimated_routes": True}, token_a

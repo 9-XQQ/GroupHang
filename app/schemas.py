@@ -91,6 +91,22 @@ class OpeningHours(BaseModel):
     close: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
+def _validate_visit_window(value):
+    start = value.visit_window_start
+    end = value.visit_window_end
+    if (start is None) != (end is None):
+        raise ValueError("固定到访开始和结束时间必须同时填写")
+    if start is None:
+        return value
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ValueError("固定到访时间必须包含时区")
+    if end <= start:
+        raise ValueError("固定到访结束时间必须晚于开始时间")
+    if (end - start).total_seconds() > 24 * 3600:
+        raise ValueError("单个地点固定到访时间窗不能超过 24 小时")
+    return value
+
+
 class DestinationCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -101,7 +117,13 @@ class DestinationCreate(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     expected_stay_min: int = Field(default=60, ge=5, le=720)
     opening_hours: OpeningHours | None = None
+    visit_window_start: datetime | None = None
+    visit_window_end: datetime | None = None
     note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_visit_window(self):
+        return _validate_visit_window(self)
 
 
 class DestinationUpdate(BaseModel):
@@ -114,7 +136,16 @@ class DestinationUpdate(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     expected_stay_min: int | None = Field(default=None, ge=5, le=720)
     opening_hours: OpeningHours | None = None
+    visit_window_start: datetime | None = None
+    visit_window_end: datetime | None = None
     note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_visit_window(self):
+        supplied = {"visit_window_start", "visit_window_end"}.intersection(self.model_fields_set)
+        if supplied and supplied != {"visit_window_start", "visit_window_end"}:
+            raise ValueError("固定到访开始和结束时间必须同时提交；清除时请同时设为 null")
+        return _validate_visit_window(self)
 
 
 class DestinationStatusUpdate(BaseModel):
@@ -184,6 +215,16 @@ class PlanningSettingsUpdate(BaseModel):
 
 class ConfirmPlanRequest(BaseModel):
     accept_estimated_routes: bool = False
+
+
+class AgentChatRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    message: str = Field(min_length=2, max_length=4000)
+
+
+class AgentProposalExecuteRequest(BaseModel):
+    proposal_id: UUID
 
 
 class DestinationFeedbackUpdate(BaseModel):

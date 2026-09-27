@@ -53,6 +53,56 @@ def _two_opt(order: list[int], matrix: list[list[float]]) -> list[int]:
     return best
 
 
+def _schedule_order(
+    order: list[int], destinations: list[dict], group_start: datetime,
+    duration_matrix: list[list[float]],
+) -> dict:
+    """计算包含等待的时间线；固定窗要求完整停留落入窗口。"""
+    cursor = group_start
+    items = []
+    for position, idx in enumerate(order):
+        if position:
+            cursor += timedelta(minutes=duration_matrix[order[position - 1]][idx])
+        raw_arrival = cursor
+        window_start = destinations[idx].get("visit_window_start")
+        window_end = destinations[idx].get("visit_window_end")
+        if window_start and cursor < window_start:
+            cursor = window_start
+        arrival = cursor
+        leave = arrival + timedelta(minutes=destinations[idx]["expected_stay_min"])
+        late_min = max(0.0, (leave - window_end).total_seconds() / 60) if window_end else 0.0
+        items.append({
+            "idx": idx, "raw_arrival": raw_arrival, "arrival": arrival, "leave": leave,
+            "wait_min": max(0.0, (arrival - raw_arrival).total_seconds() / 60),
+            "late_min": late_min,
+        })
+        cursor = leave
+    return {
+        "items": items, "end": cursor,
+        "window_penalty": sum(item["late_min"] for item in items),
+    }
+
+
+def _time_aware_order(
+    first: int, destinations: list[dict], group_start: datetime,
+    duration_matrix: list[list[float]], route_matrix: list[list[float]],
+) -> list[int]:
+    remaining = set(range(len(destinations))) - {first}
+    order = [first]
+    while remaining:
+        def candidate_key(idx: int) -> tuple:
+            schedule = _schedule_order(order + [idx], destinations, group_start, duration_matrix)
+            last = schedule["items"][-1]
+            return (
+                last["late_min"] > 0, last["late_min"],
+                schedule["end"], route_matrix[order[-1]][idx],
+            )
+        nxt = min(remaining, key=candidate_key)
+        order.append(nxt)
+        remaining.remove(nxt)
+    return order
+
+
 async def plan_itinerary(
     participants: list[dict],
     destinations: list[dict],
@@ -111,22 +161,29 @@ async def plan_itinerary(
     for first in first_candidates:
         arrivals = arrivals_by_first[first]
         route_matrix = distance_matrix if objective == "distance" else duration_matrix
-        order = _two_opt(_greedy_order(first, route_matrix), route_matrix)
         arrival_offsets = [(value["arrival_at"] - start_at).total_seconds() / 60 for value in arrivals]
         max_arrival = max(arrival_offsets)
+        candidate_group_start = max(value["arrival_at"] for value in arrivals)
+        has_windows = any(item.get("visit_window_start") for item in destinations)
+        order = (
+            _time_aware_order(first, destinations, candidate_group_start, duration_matrix, route_matrix)
+            if has_windows else _two_opt(_greedy_order(first, route_matrix), route_matrix)
+        )
+        schedule = _schedule_order(order, destinations, candidate_group_start, duration_matrix)
         route_minutes = _route_cost(order, duration_matrix)
         route_km = _route_cost(order, distance_matrix)
         availability_penalty = sum(
             1_000_000 for person, value in zip(participants, arrivals)
             if person.get("available_until") and value["arrival_at"] > person["available_until"]
         )
+        window_penalty = schedule["window_penalty"] * 1_000_000
         if objective == "distance":
-            score = route_km + max_arrival / 60.0 + availability_penalty
+            score = route_km + max_arrival / 60.0 + availability_penalty + window_penalty
         elif objective == "total_time":
-            score = route_minutes + max_arrival + availability_penalty
+            score = route_minutes + max_arrival + availability_penalty + window_penalty
         else:
             spread = max_arrival - min(arrival_offsets)
-            score = route_minutes + max_arrival + 0.25 * spread + availability_penalty
+            score = route_minutes + max_arrival + 0.25 * spread + availability_penalty + window_penalty
         if best is None or score < best["score"]:
             best = {"first": first, "order": order, "arrivals": arrivals, "score": score}
 
@@ -135,9 +192,27 @@ async def plan_itinerary(
     warnings = []
 
     def projected_end(current_order: list[int]) -> datetime:
-        travel = _route_cost(current_order, duration_matrix)
-        stays = sum(destinations[idx]["expected_stay_min"] for idx in current_order)
-        return group_start + timedelta(minutes=travel + stays)
+        return _schedule_order(current_order, destinations, group_start, duration_matrix)["end"]
+
+    # 固定时间窗冲突时，只允许剔除可选地点；优先选择能最大幅度降低迟到的地点。
+    while _schedule_order(order, destinations, group_start, duration_matrix)["window_penalty"] > 0:
+        baseline = _schedule_order(order, destinations, group_start, duration_matrix)["window_penalty"]
+        choices = []
+        for position in range(1, len(order)):
+            idx = order[position]
+            if destinations[idx]["visit_status"] != "optional":
+                continue
+            candidate = order[:position] + order[position + 1:]
+            penalty = _schedule_order(candidate, destinations, group_start, duration_matrix)["window_penalty"]
+            choices.append((baseline - penalty, position, idx))
+        if not choices or max(choices)[0] <= 0:
+            break
+        _, position, removed_idx = max(choices)
+        order.pop(position)
+        warnings.append({
+            "code": "optional_time_window_skipped", "destination_id": destinations[removed_idx]["id"],
+            "message": f"无法满足固定到访时间，已跳过可选地点：{destinations[removed_idx]['name']}",
+        })
 
     # 超时时优先剔除节省时间最多的可选点；必去点和第一站绝不移除。
     while projected_end(order) > end_at and len(order) > 2:
@@ -200,6 +275,18 @@ async def plan_itinerary(
             cursor += timedelta(minutes=minutes)
             total_km += km
         arrival = cursor
+        window_start = destination.get("visit_window_start")
+        window_end = destination.get("visit_window_end")
+        wait_min = 0
+        if window_start and arrival < window_start:
+            wait_min = round((window_start - arrival).total_seconds() / 60)
+            cursor = window_start
+            arrival = cursor
+            warnings.append({
+                "code": "wait_for_visit_window", "destination_id": destination["id"],
+                "wait_min": wait_min,
+                "message": f"提前到达 {destination['name']}，需等待 {wait_min} 分钟后开始停留",
+            })
         for person in participants:
             available_until = person.get("available_until")
             if available_until and arrival > available_until and person["user_id"] not in availability_warned:
@@ -221,11 +308,20 @@ async def plan_itinerary(
                     "message": f"{destination['name']} 预计到达时间不在营业时段 {hours['open']}-{hours['close']} 内",
                 })
         cursor += timedelta(minutes=destination["expected_stay_min"])
+        if window_end and cursor > window_end:
+            warnings.append({
+                "code": "destination_time_window_conflict", "destination_id": destination["id"],
+                "late_min": round((cursor - window_end).total_seconds() / 60),
+                "message": f"{destination['name']} 无法在固定到访时间内完成停留",
+            })
         ordered_stops.append({
             "destination_id": destination["id"], "name": destination["name"],
             "lat": destination["lat"], "lng": destination["lng"], "order_index": position + 1,
             "arrival_at": arrival.isoformat(), "leave_at": cursor.isoformat(),
             "expected_stay_min": destination["expected_stay_min"], "visit_status": destination["visit_status"],
+            "visit_window_start": window_start.isoformat() if window_start else None,
+            "visit_window_end": window_end.isoformat() if window_end else None,
+            "wait_min": wait_min,
         })
     if cursor > end_at:
         warnings.append({

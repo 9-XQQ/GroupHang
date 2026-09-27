@@ -98,6 +98,8 @@ class TripDestination(Base):
     visit_status: Mapped[str] = mapped_column(String(20), default="candidate")
     expected_stay_min: Mapped[int] = mapped_column(Integer, default=60)
     opening_hours: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    visit_window_start: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    visit_window_end: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
