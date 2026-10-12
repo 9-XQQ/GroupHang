@@ -716,7 +716,15 @@ function assistantActionLabel(action) {
     return `更新规划：${formatTime(action.planned_start_at)} 至 ${formatTime(action.planned_end_at)}，${mode}，${objectives[action.optimization_objective] || action.optimization_objective}`;
   }
   if (action.type === 'prepare_place_import') return '解析这段文字中的地点，并进入高德候选确认';
+  if (action.type === 'update_destination') {
+    const parts = [`修改地点 #${Number(action.destination_id)}`];
+    if (action.expected_stay_min != null) parts.push(`停留 ${Number(action.expected_stay_min)} 分钟`);
+    if (action.visit_status) parts.push(`状态 ${action.visit_status}`);
+    if (action.visit_window_start) parts.push(`固定 ${formatTime(action.visit_window_start)}～${formatTime(action.visit_window_end)}`);
+    return parts.join(' · ');
+  }
   if (action.type === 'generate_itinerary') return '使用当前已确认输入生成多地点路线';
+  if (action.type === 'compare_itineraries') return '模拟比较均衡、总时间最短和总距离最短方案（不保存）';
   return '未知操作';
 }
 
@@ -736,9 +744,18 @@ async function askAssistant() {
     const actions = (result.actions || []).map(action => `<li>${escapeHtml(assistantActionLabel(action))}</li>`).join('');
     const usage = result.llm_usage
       ? `<div class="muted">模型用量：输入 ${Number(result.llm_usage.input_tokens)} · 输出 ${Number(result.llm_usage.output_tokens)} · 合计 ${Number(result.llm_usage.total_tokens)} tokens</div>` : '';
+    const readiness = result.planning_readiness || {};
+    const readinessIssues = [...(readiness.missing || []), ...(readiness.blockers || [])];
+    const readinessHtml = `<div class="muted">规划检查：${readiness.ready_to_plan ? '✓ 当前输入可以生成多地点路线' : '尚不能生成多地点路线'}</div>`
+      + (readinessIssues.length
+        ? `<ul>${readinessIssues.map(item => `<li>${escapeHtml(item.message || item.code)}</li>`).join('')}</ul>` : '');
+    const routeSummary = result.route_summary || {};
+    const routeHtml = routeSummary.has_plan
+      ? `<div class="muted">路线质量：真实路段 ${Number(routeSummary.real_segment_count || 0)} · 估算路段 ${Number(routeSummary.estimated_segment_count || 0)} · 等待 ${Number(routeSummary.total_wait_min || 0)} 分钟 · 时间窗冲突 ${Number(routeSummary.time_window_conflict_count || 0)}</div>`
+      : '<div class="muted">路线质量：当前还没有路线方案</div>';
     resultEl.innerHTML = `<div>${escapeHtml(result.reply).replace(/\n/g, '<br>')}</div>`
       + (actions ? `<div style="margin-top:6px"><b>待确认草案</b><ul>${actions}</ul></div>` : '')
-      + usage + (result.warning ? `<div class="err">${escapeHtml(result.warning)}</div>` : '')
+      + readinessHtml + routeHtml + usage + (result.warning ? `<div class="err">${escapeHtml(result.warning)}</div>` : '')
       + `<div class="muted">来源：${result.llm_used ? 'LLM + 服务端安全校验' : '确定性降级摘要'}</div>`;
     executeButton.style.display = state.agentProposalId ? 'block' : 'none';
   } catch (e) {
@@ -759,9 +776,19 @@ async function executeAssistantProposal() {
     button.style.display = 'none';
     await openTrip(state.tripId);
     if (execution.place_import) applySharedTextResult(execution.place_import);
-    document.getElementById('assistantResult').textContent = execution.place_import
-      ? `草案已执行，识别到 ${(execution.place_import.candidates || []).length} 个地点，请在“分享文本导入地点”区域确认。`
-      : execution.itinerary ? '草案已执行并生成路线，结果已刷新。' : '草案已执行，Trip 状态已刷新。';
+    if (execution.comparison) {
+      const labels = { balanced: '均衡', total_time: '总时间最短', distance: '总距离最短' };
+      const rows = (execution.comparison.comparisons || []).map(item => {
+        const stops = (item.ordered_stops || []).map(stop => escapeHtml(stop.name)).join(' → ');
+        return `<li><b>${labels[item.objective] || escapeHtml(item.objective)}</b>：${stops}<br>`
+          + `<span class="muted">总行程 ${Number(item.total_duration_min)} 分钟 · 路程 ${Number(item.total_distance_km).toFixed(2)} km · 等待 ${Number(item.total_wait_min)} 分钟 · 估算 ${Number(item.estimated_segment_count)} 段 · 时间窗冲突 ${Number(item.time_window_conflict_count)}</span></li>`;
+      }).join('');
+      document.getElementById('assistantResult').innerHTML = `<b>候选路线对比（未保存）</b><ul>${rows}</ul>`;
+    } else {
+      document.getElementById('assistantResult').textContent = execution.place_import
+        ? `草案已执行，识别到 ${(execution.place_import.candidates || []).length} 个地点，请在“分享文本导入地点”区域确认。`
+        : execution.itinerary ? '草案已执行并生成路线，结果已刷新。' : '草案已执行，Trip 状态已刷新。';
+    }
     toast('助手草案已执行');
   } catch (e) {
     toast(e.message, true);

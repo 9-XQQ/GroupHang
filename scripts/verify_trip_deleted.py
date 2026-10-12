@@ -1,4 +1,4 @@
-"""Verify that deleting a Trip cascaded to all Trip-scoped Phase 4 data."""
+"""Verify that deleting a Trip cascaded to all known Trip-scoped data."""
 import argparse
 import asyncio
 import sys
@@ -20,6 +20,8 @@ TABLES = (
     "destination_feedback",
     "place_parse_feedback",
     "itinerary_plans",
+    "agent_proposals",
+    "agent_conversation_states",
 )
 
 

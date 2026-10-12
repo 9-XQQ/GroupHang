@@ -171,3 +171,35 @@ class PlaceParseFeedback(Base):
     final_place: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     consent_to_improve: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class AgentProposal(Base):
+    __tablename__ = "agent_proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    input_version: Mapped[int] = mapped_column(Integer)
+    actions: Mapped[list] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentConversationState(Base):
+    __tablename__ = "agent_conversation_states"
+    __table_args__ = (
+        UniqueConstraint("trip_id", "user_id", name="uq_agent_conversation_state_user"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    last_actions: Mapped[list] = mapped_column(JSONB, default=list)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

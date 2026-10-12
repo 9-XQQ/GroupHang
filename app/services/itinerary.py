@@ -110,9 +110,10 @@ async def plan_itinerary(
     end_at: datetime,
     group_mode: str,
     objective: str,
+    shared_route_cache: dict | None = None,
 ) -> dict:
     """返回第一站、个人赴约、共同顺序和时间线。"""
-    route_cache: dict[tuple, asyncio.Task] = {}
+    route_cache: dict[tuple, asyncio.Task] = shared_route_cache if shared_route_cache is not None else {}
 
     async def cached_route(origin: tuple, dest: tuple, mode: str) -> dict:
         key = (

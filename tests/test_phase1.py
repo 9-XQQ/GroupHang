@@ -50,6 +50,21 @@ class AgentAssistantTests(unittest.TestCase):
         self.assertEqual(proposal.input_version, 11)
         self.assertIsNone(assistant.take(proposal_id, 3, 7))
 
+    def test_wrong_user_cannot_destroy_or_claim_proposal(self):
+        assistant = AgentAssistant()
+        proposal_id = assistant.store(
+            3, 7, 11, [AgentAction(type="switch_workflow", primary_workflow="meeting")],
+        )
+        self.assertIsNone(assistant.take(proposal_id, 3, 8))
+        self.assertIsNone(assistant.claim(proposal_id, 4, 7))
+        proposal = assistant.claim(proposal_id, 3, 7)
+        self.assertIsNotNone(proposal)
+        self.assertIsNone(assistant.claim(proposal_id, 3, 7))
+        assistant.release(proposal_id)
+        self.assertIsNotNone(assistant.claim(proposal_id, 3, 7))
+        assistant.consume(proposal_id)
+        self.assertIsNone(assistant.claim(proposal_id, 3, 7))
+
     def test_proposal_actions_are_deduplicated_and_safely_ordered(self):
         assistant = AgentAssistant()
         proposal_id = assistant.store(3, 7, 11, [
@@ -69,6 +84,21 @@ class AgentAssistantTests(unittest.TestCase):
                 "reply": "将直接删除行程", "actions": [{"type": "delete_trip"}],
             })
 
+    def test_destination_action_requires_existing_id_and_complete_window(self):
+        with self.assertRaises(ValidationError):
+            AgentAction(type="update_destination", expected_stay_min=90)
+        with self.assertRaises(ValidationError):
+            AgentAction(
+                type="update_destination", destination_id=3,
+                visit_window_start=datetime(2026, 10, 2, 11, 0, tzinfo=timezone(timedelta(hours=8))),
+            )
+        action = AgentAction(
+            type="update_destination", destination_id=3, expected_stay_min=90,
+            visit_window_start=datetime(2026, 10, 2, 11, 0, tzinfo=timezone(timedelta(hours=8))),
+            visit_window_end=datetime(2026, 10, 2, 13, 0, tzinfo=timezone(timedelta(hours=8))),
+        )
+        self.assertEqual(action.destination_id, 3)
+
     def test_fallback_summary_uses_only_structured_context(self):
         summary = AgentAssistant.fallback_summary({
             "trip": {"title": "周末", "status": "active"},
@@ -77,6 +107,47 @@ class AgentAssistantTests(unittest.TestCase):
         })
         self.assertIn("1 名参与者", summary)
         self.assertIn("1 个地点", summary)
+        self.assertIn("至少需要 2 个", summary)
+
+    def test_planning_readiness_reports_deterministic_missing_inputs(self):
+        readiness = AgentAssistant.planning_readiness({
+            "trip": {
+                "status": "active", "primary_workflow": "itinerary",
+                "planned_start_at": None, "planned_end_at": None,
+            },
+            "participants": [
+                {"name": "小明", "has_start_location": True},
+                {"name": "小红", "has_start_location": False},
+            ],
+            "destinations": [{"id": 1, "visit_status": "must_visit"}],
+        })
+        self.assertFalse(readiness["ready_to_plan"])
+        self.assertEqual(
+            [item["code"] for item in readiness["missing"]],
+            ["planning_time_missing", "participant_origins_missing", "destinations_insufficient"],
+        )
+
+    def test_fallback_summary_explains_estimates_waiting_and_window_conflicts(self):
+        context = {
+            "trip": {
+                "title": "午餐", "status": "active", "primary_workflow": "itinerary",
+                "planned_start_at": "2026-10-01T10:00:00+08:00",
+                "planned_end_at": "2026-10-01T18:00:00+08:00",
+            },
+            "participants": [{"name": "甲", "has_start_location": True}],
+            "destinations": [
+                {"visit_status": "must_visit"}, {"visit_status": "optional"},
+            ],
+            "latest_plan": {"ordered_stops": [{}, {}], "total_duration_min": 180},
+            "route_summary": {
+                "estimated_segment_count": 2, "total_wait_min": 30,
+                "time_window_conflict_count": 1,
+            },
+        }
+        summary = AgentAssistant.fallback_summary(context)
+        self.assertIn("2 段为直线估算", summary)
+        self.assertIn("30 分钟等待", summary)
+        self.assertIn("1 个固定时间窗冲突", summary)
 
     def test_explicit_chinese_settings_command_has_deterministic_draft(self):
         actions = AgentAssistant.infer_actions(
@@ -101,11 +172,36 @@ class AgentAssistantTests(unittest.TestCase):
         self.assertEqual(place_actions[0].type, "prepare_place_import")
         route_actions = AgentAssistant.infer_actions("请开始规划路线", context)
         self.assertEqual(route_actions[0].type, "generate_itinerary")
+        compare_actions = AgentAssistant.infer_actions("请对比不同路线方案", context)
+        self.assertEqual(compare_actions[0].type, "compare_itineraries")
+
+    def test_destination_change_fallback_requires_unique_explicit_name(self):
+        context = {
+            "trip": {"group_transport_mode": "transit", "optimization_objective": "balanced"},
+            "destinations": [
+                {"id": 3, "name": "美奈小馆"}, {"id": 4, "name": "广州塔"},
+            ],
+        }
+        actions = AgentAssistant.infer_actions("请把美奈小馆停留时间改成90分钟并设为必去", context)
+        destination_action = next(action for action in actions if action.type == "update_destination")
+        self.assertEqual(destination_action.destination_id, 3)
+        self.assertEqual(destination_action.expected_stay_min, 90)
+        self.assertEqual(destination_action.visit_status, "must_visit")
+        self.assertFalse(any(
+            action.type == "update_destination"
+            for action in AgentAssistant.infer_actions("请把第一家停留时间改成90分钟", context)
+        ))
 
     def test_short_term_history_is_scoped_and_clearable(self):
         assistant = AgentAssistant()
-        assistant.remember(3, 7, "上一问", "上一答")
+        assistant.remember(
+            3, 7, "上一问", "上一答",
+            [AgentAction(type="update_destination", destination_id=9, expected_stay_min=60)],
+        )
         self.assertEqual(len(assistant.history(3, 7)), 2)
+        self.assertEqual(
+            assistant.history(3, 7)[1]["proposed_actions"][0]["destination_id"], 9,
+        )
         self.assertEqual(assistant.history(3, 8), [])
         self.assertEqual(assistant.history(4, 7), [])
         assistant.clear_history(3, 7)

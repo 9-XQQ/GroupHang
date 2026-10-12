@@ -1,8 +1,9 @@
 # 多人出行规划 Agent：项目交接说明
 
-> 核对日期：2026-09-21（Asia/Shanghai）
-> 核对基线：当前工作区包含本轮尚未提交的 Phase 3/4 修改，具体范围以 `git status` 和本文测试记录为准。
+> 核对日期：2026-10-12（Asia/Shanghai）
+> 核对基线：Phase 4 基础任务已完成，Phase 5 对话闭环及 Agent 优化首版已实现；当前仍有未提交的 Agent 持久化等修改，不等于生产就绪。
 > 本文以当前代码、迁移、OpenAPI、Git 状态及实际测试结果为准。`docs_private/` 中部分早期进度描述已经过时，不能单独作为当前状态依据。
+> 本轮仅核查并更新本文件，不开发功能、不修改其他文件、不自动提交。既有未提交修改予以保留。
 
 ## 1. 当前已经完成的功能
 
@@ -21,13 +22,14 @@
 - 地点 CRUD、候选/必去/可选/排除状态、地点投票和预计停留时间。
 - 单人也可以规划多个地点；多人可以从不同出发点、使用不同交通方式前往第一站集合。
 - 创建者设置行程起止时间、共同交通方式以及均衡/总时间/总距离优化目标。
-- 在 2～10 个已确认地点内选择第一站，再用最近邻与 2-opt 启发式优化后续顺序。
+- 支持 2～10 个已确认地点；无固定时间窗时采用最近邻与 2-opt，有固定时间窗时采用时间感知贪心排序。存在必去地点时，第一站候选限制为必去地点，并非枚举所有已确认地点。
 - 生成每位参与者到第一站的 ETA、共同路线分段、地点到达/离开时间线、总耗时及警告。
 - `available_from` 会推迟个人出发；`available_until` 会产生结构化冲突警告。
 - 时间不足时允许跳过 `optional`，但不跳过 `must_visit`。
 - 规划快照保存参与者路线和共同路线 geometry，保证不同客户端看到同一结果。
 - 输入变更会递增 `input_version`；旧方案标记为过期，过期方案不能确认。
 - 创建者可确认最终方案，确认后 Trip 锁定；创建者可以重新打开编辑。
+- 地点支持成对设置固定到访时间窗，生成等待及迟到冲突信息；这不是严格可行性求解，详见第 8 节限制。
 
 ### Phase 3：地点搜索和分享文本导入
 
@@ -35,7 +37,7 @@
 - 规则解析结构化文本、标签文本和竖线分隔文本。
 - 解析高德直接链接、短链接和 `wb.amap.com/?p=...` 分享参数。
 - 可选 LLM 地点提取，支持 OpenAI-compatible Chat Completions 和路径含 `/anthropic` 的 Anthropic Messages 兼容接口。
-- 支持用户分别粘贴正文和评论，并标记小红书、大众点评、美团等来源；统一手动导出适配层会清理界面噪声并规范作者/商家回复；评论观点按主题、倾向和证据句汇总，`评论：`/`回复：` 可保留楼层关系；明确出现地点名称的楼层会自动关联到候选地点，用户也可在当前页面手动改绑或取消关联；不自动抓取第三方平台，也不持久化评论原文。
+- 支持用户分别粘贴正文和评论，并标记小红书、大众点评、美团等来源；统一手动导出适配层会清理界面噪声并规范作者/商家回复；评论观点按主题、倾向和证据句汇总，`评论：`/`回复：` 可保留楼层关系；明确出现地点名称的楼层会自动关联到候选地点，用户也可在当前页面手动改绑或取消关联；不自动抓取第三方平台。普通解析/反馈流程不持久化评论原文，但 Agent 导入草案存在原文落库问题，见第 8 节。
 - LLM 输出必须通过本地 Pydantic schema；失败时自动回退规则解析。
 - 解析结果经过高德地理编码，并要求用户人工确认后才写入 Trip。
 
@@ -46,6 +48,15 @@
 - 地点解析接受、修改和拒绝保存严格脱敏快照；不保存输入原文，正式授权流程上线前 `consent_to_improve` 只能为 false。
 - 本人可设置显式偏好，并从已完成行程评价重建可解释派生偏好；可随时关闭或清空。
 - 至少 3 条有效本人反馈且个性化开启时，候选地点在投票净分上获得最多 0.5 的个人软加分并显示原因；不改变地点原顺序、必去状态或核心路线规划。
+
+### Phase 5：对话式 Agent 与优化首版
+
+- 已实现结构化行程问答、偏好解释、主方案/规划参数修改草案、地点文本解析草案、路线生成草案及受控 `update_destination`（停留、状态、固定时间窗）。页面显示调用来源及 token/cache usage；明确中文指令有窄范围规则兜底。
+- 写操作草案绑定 Trip、创建者及输入版本，需用户执行确认；地点仍须逐项人工确认，最终路线确认独立进行。执行结果逐项带 `status`。
+- 上下文包含营业/固定时间窗、规划就绪诊断、路线真实/估算摘要、等待与冲突，不发送坐标/geometry。
+- `compare_itineraries` 使用共享路线缓存，对相同输入比较 balanced/total_time/distance 三种优化目标，不保存正式方案；尚不是任意假设修改的反事实比较。
+- 最近 3 轮原始问答保存在进程内，保留 30 分钟；结构化 action 摘要与可执行草案已迁移 PostgreSQL，支持数据库条件更新领取。该首版仍有隐私、并发和崩溃恢复缺口，不应称为完整生产化或端到端幂等。
+- 已有共同约点/多地点界面及地图图层隔离、主方案同步、个人与 Trip 时间回填、评价/停留内联编辑、账号切换表单清理，以及高德 `10021` 进程内熔断与调用统计。
 
 ### 前端与运行能力
 
@@ -74,13 +85,15 @@ project1/
 │     ├─ shared_text.py       确定性分享文本解析
 │     ├─ source_adapters.py   跨平台手动导出文本规范化
 │     ├─ llm_parser.py        可选 LLM 地点提取适配器
+│     ├─ agent_assistant.py   对话上下文、动作识别、诊断与短期原始问答
+│     ├─ preferences.py       显式/派生偏好与有界软推荐
 │     └─ ws.py                WebSocket 连接管理与广播
 ├─ frontend/index.html        当前全部前端页面、样式和脚本
-├─ migrations/               Alembic 环境与 0001～0008 迁移
-├─ tests/test_phase1.py       70 个 unittest 单元/规则测试
+├─ migrations/               Alembic 环境与 0001～0009 迁移
+├─ tests/test_phase1.py       当前 discover 共 75 个 unittest 单元/规则测试
 ├─ test_e2e.py               需要已启动服务和 PostgreSQL 的完整 HTTP E2E
 ├─ scripts/evaluate_place_parser.py  规则/LLM 地点解析评测脚本
-├─ scripts/verify_trip_deleted.py     Trip 及 Phase 4 关联数据级联删除核验
+├─ scripts/verify_trip_deleted.py     Trip 及 Phase 4/Agent 关联数据级联删除核验
 ├─ docs_private/              被 Git 忽略的内部设计、记录和评测数据
 ├─ docs/PROJECT_HANDOFF.md    本交接文档
 ├─ requirements.txt
@@ -93,18 +106,20 @@ project1/
 ## 3. 数据库和 Alembic 当前状态
 
 - 数据库：PostgreSQL，异步驱动 `asyncpg`；当前不使用 PostGIS，坐标为 Float/JSONB。
-- 实际执行 `python -m alembic current` 与 `heads` 均返回：`0008_destination_visit_window (head)`。
+- 实际执行 `python -m alembic current` 与 `heads` 均返回：`0009_agent_state (head)`。
 - 迁移链：
   - `0001_phase1_baseline`：用户、Trip、参与者、约点结果和投票基础表。
   - `0002_phase2a_destinations`：多目的地、规划参数、`input_version`、`trip_destinations`、`itinerary_plans`。
-  - `0003_availability`：参与者 `available_from` / `available_until`。
+  - `0003_participant_availability`：参与者 `available_from` / `available_until`。
   - `0004_trip_lifecycle`：`finished → confirmed`，新增 `completed_at` / `completed_by`。
   - `0005_destination_feedback`：已完成行程的逐用户地点评价。
   - `0006_trip_primary_workflow`：创建者控制的 Trip 主方案类型。
   - `0007_place_parse_feedback`：解析候选接受、修改和拒绝的脱敏反馈。
   - `0008_destination_visit_window`：地点级固定到访开始/结束时间及成对约束。
-- 当前主要表：`users`、`trips`、`trip_participants`、`meeting_point_results`、`trip_votes`、`trip_destinations`、`itinerary_plans`、`destination_feedback`、`place_parse_feedback`。
-- 最新完整 E2E 使用 `trip_id=27` 并在成功后自动删除；本轮失败遗留的 `trip_id=25` 也已定向删除，未留下本轮测试 Trip。
+  - `0009_agent_state`：Agent 草案及结构化短期状态；摘要排除 `import_text`，但可执行草案仍保存该字段。过期目前仅限制查询/执行，未实现物理清理。
+- 当前主要表：`users`、`trips`、`trip_participants`、`meeting_point_results`、`trip_votes`、`trip_destinations`、`itinerary_plans`、`destination_feedback`、`place_parse_feedback`、`agent_proposals`、`agent_conversation_states`。
+- 既有 2026-10-12 完整 E2E 记录为 Trip #36，已删除并核验八张相关表无残留。本轮交接核查没有新建或删除测试 Trip，也没有重跑 HTTP E2E。
+- `0009_agent_state.py` 当前为未跟踪文件，但本机数据库已应用；后续交接/提交必须包含该迁移，不能仅交付 ORM 和路由修改。
 - Phase 4A-1/2/3 已新增 `completed_at`、`completed_by`、`destination_feedback` 和 `place_parse_feedback`。
 
 迁移操作：
@@ -132,6 +147,8 @@ python -m alembic upgrade head
 | 诊断 | `GET /api/places/diagnostics`、`GET /api/diagnostics/llm`（均需登录，不返回 Key/原文） |
 | 偏好 | `GET/PUT /users/me/preferences`、`POST .../rebuild`、`DELETE .../derived` |
 | 约点/投票 | `GET/POST /trips/{id}/meeting-points`、`GET/POST /trips/{id}/votes` |
+| 主方案 | `PUT /trips/{id}/workflow` |
+| Agent | `POST /trips/{id}/assistant/chat`、`DELETE .../assistant/history`、`POST .../assistant/proposals/execute` |
 | 实时同步 | `WS /trips/{id}/ws?token=...` |
 | 基础 | `GET /health`、`GET /api/config`、`/docs`、`/openapi.json` |
 
@@ -164,33 +181,47 @@ python -m alembic upgrade head
 
 ## 7. 已完成的测试
 
-本次（2026-09-27）实际执行：
+本轮交接核查（2026-10-12）实际执行，使用 `D:\anaconda3\envs\route_plan\python.exe`，未启动新服务：
 
 | 检查 | 结果 |
 |---|---|
-| `python -m unittest discover -s tests -v` | 70/70 通过 |
+| `python -m unittest discover -s tests -q` | 75/75 通过（0.150 秒） |
 | `python -m compileall -q app tests test_e2e.py scripts` | 通过 |
 | 前端内嵌 JavaScript `new Function` 语法检查 | 通过 |
-| `python -m alembic current` / `heads` | `0008_destination_visit_window (head)` |
-| OpenAPI 路径生成 | 7 个 Phase 4 必需路径存在，31 个总路径正常生成 |
-| 启动 Uvicorn 后运行 `python test_e2e.py http://127.0.0.1:8000` | 通过，退出码 0；测试 Trip 已在末尾删除 |
+| `python -m alembic current` / `heads` | `0009_agent_state (head)` |
+| OpenAPI 路径生成 | 34 个路径正常生成，包含 3 个 Agent 路径 |
+| `git diff --check` | 通过；仅有 LF/CRLF 转换提示 |
+| HTTP E2E、浏览器验收、付费 LLM/高德请求 | 本轮未执行，不视为本轮通过项 |
 
-70 个单元测试覆盖：成员/非成员访问、锁定 Trip 禁止修改、schema 校验、高德路线与配额熔断、POI/分享链接、单人多地点、Trip 与地点级时间约束、提前等待、必去/可选时间窗冲突、路线快照、约点、投票、规则及评论楼层/回复/地点关联、跨平台手动导出适配、两种 LLM 响应及 token/cache usage、Agent 草案安全、短期对话历史、解析反馈隐私字段/授权约束、可解释偏好计算和有界软推荐。
+75 个单元测试覆盖：成员/非成员访问、锁定 Trip 禁止修改、schema 校验、高德路线与配额熔断、POI/分享链接、单人多地点、Trip 与地点级时间约束、提前等待、必去/可选时间窗冲突、路线快照、约点、投票、规则及评论楼层/回复/地点关联、跨平台手动导出适配、两种 LLM 响应及 token/cache usage、Agent 草案归属/占用/消费、确定性规划诊断、地点修改 action、路线质量降级摘要、短期对话 action 状态、解析反馈隐私字段/授权约束、可解释偏好计算和有界软推荐。Agent 相关测试包含旧内存实现，不能据此推断当前数据库路由已经通过真实并发、重启或崩溃恢复验收。
 
-E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两名参与者提交不同出发方式、地点协作与权限、多地点规划与确认/重开、分享文本解析并确认加入、约点、投票/取消、Phase 4 生命周期与完成后只读、评价聚合与文字隐私、解析反馈及授权拒绝、显式/派生偏好软分解释/关闭/清空（包括空数组保存后重新读取），以及测试 Trip 删除级联。删除后再由 `scripts/verify_trip_deleted.py` 直接查询六张 Trip 相关表，确认无关联数据残留。脚本遇到高德 `10021` 时会明确跳过真实定位外部断言；最新一次运行真实地点定位、路线和约点 POI 成功。
+既有 E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两名参与者提交不同出发方式、地点协作与权限、多地点规划与确认/重开、分享文本解析并确认加入、约点、投票/取消、Phase 4 生命周期与完成后只读、评价聚合与文字隐私、解析反馈及授权拒绝、显式/派生偏好软分解释/关闭/清空（包括空数组保存后重新读取），以及测试 Trip 删除级联。上一轮记录中 `scripts/verify_trip_deleted.py` 核验 Trip、参与者、地点、路线、地点反馈、解析反馈及两张 Agent 状态表共八张表均为 0。脚本遇到高德 `10021` 时会跳过真实定位外部断言，因此整体通过不等于所有外部能力均成功。
+
+本轮不重跑 E2E 的原因：脚本使用固定账号，会修改昵称及创建者偏好，结束时未恢复原偏好；Trip 清理也未放入 `finally`。应先完成测试数据隔离和异常清理，再重复执行。上述历史记录不是本轮重新验证的结果。
 
 ## 8. 当前已知问题
 
 ### 需要优先解决
 
+以下 Agent 问题由本轮静态代码核查发现，尚未通过故障注入复现；本轮只记录，不实施修复：
+
+- P0 隐私：`app/routers/agent.py::_store_proposal` 将完整 action JSON 写入 `agent_proposals.actions`，其中包括 `import_text`。仅 `_save_structured_state` 排除导入原文；不能把摘要脱敏等同于所有 Agent 数据脱敏。草案过期未物理删除，已消费草案也保留内容，需明确最小化保存、保留期限和清理机制。
+- P0 执行一致性：领取草案的条件 UPDATE 是原子的，但 `executing` 没有租约/崩溃恢复。路线生成内部提交、执行器提交和标记 consumed 分属不同提交边界；进程中断可能留下已生效动作和未完成草案，外层 rollback 无法撤销已提交的路线。当前没有端到端幂等保证；执行时 Trip 版本检查也没有行锁/CAS 保证。
+- P1 多动作丢失：`_store_proposal` 按 `action.type` 去重，同一草案修改多个地点时，多条 `update_destination` 只留下最后一条。应按动作语义/地点标识处理，而不是只按类型去重。
+- P1 并发与清空：结构化状态采用先查后插，首次并发请求可能触发 `(trip_id, user_id)` 唯一约束冲突；清空历史没有撤销尚可执行的草案，也不会清除其他 worker 的内存问答。
+- P1 多进程部署：WebSocket 房间、原始问答、高德熔断/统计及 token 映射仍是进程内状态。数据库草案领取不代表整个应用支持跨 worker 一致广播、登录或恢复。
+
 1. 2026-09-22 用户已用内置浏览器验证 Phase 4 评价与偏好表单的提交、持久化、回填、校验和取消；两轮检查发现并修复窄窗口地图遮挡控件、刷新丢失登录、确认后摘要状态不同步、偏好保存无反馈、空文本无法清除偏好和登录输入框过窄，修复后的重复页面验收尚待执行。
-2. 当前 token 是开发阶段随机 token，持久化于本地 `.token_store.json`；没有过期、撤销、JWT/Redis session、设备管理或正式微信 code2session。
+2. 当前 token 是开发阶段随机 token，持久化于本地 `.token_store.json`；手机号没有所有权验证，微信 code 是开发占位；没有过期、服务端注销/撤销、设备管理或正式微信 code2session。正式认证只做过检查，尚未实现。
 3. 默认 `DEBUG=True`，开发模式的未处理 500 会返回 traceback；CORS 也为全开放。不能直接作为公网生产配置。
 
 ### 功能与体验限制
 
 - 当前页面是功能验证型原生单页，信息密度、视觉层级、间距、响应式布局和操作反馈尚未形成统一设计系统；下一轮应先做信息架构与交互稿，再拆分单文件前端，避免继续局部打补丁。
-- 路线顺序使用最近邻 + 2-opt 启发式，不保证全局最优；尚未引入 OR-Tools。
+- 无固定时间窗时用最近邻 + 2-opt，有固定时间窗时用时间感知贪心，不保证全局最优或必然找到可行顺序；尚未引入 OR-Tools。第一站仅枚举必去地点的策略可能漏掉“可选地点先行”的可行路线。
+- 固定时间窗冲突目前主要为警告，并非最终确认的硬性禁止条件；不能承诺所有已确认方案满足时间窗。`total_time` 目标评分没有完整计入等待，不等于全流程耗时全局最小。
+- 方案比较只改变三个优化目标；尚未支持“交换 B/C、修改某站时间”等假设场景、与当前方案的差量对比、选择比较结果直接保存及基于计算结果的二次 LLM 解释。比较中的 `total_distance_km` 为共同游览段，不包含各参与者赴约段。
+- Agent 尚不能通过全空字段清除已有固定时间窗，也没有个人参与时间修改 action；复杂相对时间指令仍依赖模型理解。
 - 地点级固定到访时间窗首版已支持，但目前仅支持单个、最长 24 小时的连续时区时间窗；尚未支持按星期、多段营业时间和跨日复杂规则。
 - `available_until` 目前主要生成警告；尚未支持参与者中途离队、分支路线和个人返程。
 - 营业时间只支持简单的单日 `HH:MM`，复杂星期规则和跨日营业未完整处理。
@@ -208,17 +239,33 @@ E2E 覆盖：三用户登录、创建/列出/加入 Trip、非成员 403、两�
 - Phase 4A-2 已完成：已完成 Trip 的地点访问、评分、实际停留、标签和再访意愿反馈。
 - Phase 4A-3 已完成首版：记录地点解析候选被接受/修改/拒绝的脱敏反馈，不保存原始聊天全文；迁移为 `0007_place_parse_feedback`。
 - Phase 4B 已完成：基于本人已完成行程反馈生成可解释偏好，支持显式偏好、查看、关闭、重建和清空；候选地点采用最多 0.5 的个人软加分，不改变核心路线排序。
-- Phase 5：对话式 Agent 编排。LLM 目前只是默认关闭的分享文本地点提取增强器，产品存在感很弱；后续应提供明确的调用状态，并逐步加入评论摘要、路线解释、调整建议和自然语言修改草案。权限、事实查询、路线计算和最终写入仍由确定性服务及用户确认控制。
-- Phase 5 当前计划内闭环已完成：支持结构化上下文问答、Phase 4 偏好解释、主方案/规划参数草案、地点文本解析草案和路线生成草案；地点继续经过高德候选与逐项人工确认，最终路线确认仍独立执行。页面展示调用来源与 token。一次性草案绑定 active Trip 的 creator 与输入版本；明确中文指令有窄范围规则兜底，普通问句不会生成写操作。最近 3 轮对话仅在进程内保存 30 分钟并可主动清空，不持久化原文。
+- Phase 5 基础对话闭环及优化首版已实现（见第 1 节），不再是“只有文本提取增强器”。以下带日期的条目是实现沿革，不代表仍需重复开发；尚未完成项以本节末尾清单和第 8、10 节为准。
+- Phase 5 基础闭环已完成：支持结构化上下文问答、Phase 4 偏好解释、主方案/规划参数草案、地点文本解析草案和路线生成草案；地点继续经过高德候选与逐项人工确认，最终路线确认仍独立执行。页面展示调用来源与 token。草案绑定 active Trip 的 creator 与输入版本；明确中文指令有窄范围规则兜底。最近 3 轮原始问答仅在进程内保存 30 分钟并可主动清空；这不包含可执行导入草案的存储，其原文落库问题见第 8 节。
+- 2026-09-28 Agent 优化第一步：增加草案归属、版本检查和占用/消费状态，执行结果逐项带 `status`。当时的同进程保护不能代替当前数据库执行链的事务与崩溃恢复验收。
+- 2026-09-28 Agent 优化第二批已实现：上下文加入地点营业/固定时间窗和脱敏路线摘要，不发送坐标/geometry；API 与页面直接展示确定性 `planning_readiness`、真实/估算路段、等待和固定窗冲突；新增受控 `update_destination` 草案修改停留时长、固定窗和状态，变更后使旧方案过期。短期历史保留不含导入原文的 action 摘要以支持追问。
+- 2026-09-28 无落库候选方案比较已完成首版：`compare_itineraries` 使用共享路线缓存模拟 balanced/total_time/distance，返回路线顺序、总耗时、共同段距离、等待、估算路段和时间窗冲突，不写正式方案；E2E 已包含比较后 latest plan 为 404 的断言。
+- 2026-09-28 Agent 状态持久化首版已实现：草案与结构化 action 摘要迁移到 PostgreSQL，具备状态及条件领取；未领取且未过期的草案具备重启后读取基础，但执行中崩溃恢复、物理清理和原文最小化尚未完成。迁移为 `0009_agent_state`，Trip 删除核验脚本覆盖两张新表。撤回此前“生产化已完成、不能重复消费”的端到端保证表述，详见第 8 节。
+- 2026-10-12 Phase 4 完成审计：Phase 4A-1、4A-2、4A-3、4B 的代码、迁移、前端与数据治理要求均已满足；75/75 单元测试、compileall、前端内嵌 JavaScript、8 条 Phase 4 必需 OpenAPI 路径、Alembic `0009_agent_state (head)`、`git diff --check` 和完整数据库 HTTP E2E 全部通过。E2E Trip #36 已删除，直接查询 Trip、参与者、地点、路线、地点反馈、解析反馈及两张 Agent 状态表均为 0。Phase 4 计划内任务无剩余；修复后浏览器重复视觉验收属于 UI 回归建议，不是 Phase 4 功能缺口。
 - 正式认证、账号安全、设备/session 管理、HTTPS、审计、备份、数据导出/删除和云端部署。
+- Agent 原文最小化/清理、执行租约与恢复、事务及幂等边界、Trip 并发版本保护、多地点动作保留、状态 upsert、清空历史与草案撤销语义。
+- 针对真实 PostgreSQL Agent 路由的并发/重启/失败恢复测试，以及 E2E 独立账号、偏好恢复和 `finally` 清理。
+- 任意假设场景的方案差量比较与选定保存、时间窗硬约束策略、Agent 清除时间窗及个人时间修改能力。
 - 多段/周期/跨日地点时间窗、参与者提前离队/返程、入口级选点、百度分享链接与坐标系转换。
 - 更系统的数据库路由集成测试、前端自动化测试、外部 API mock/契约测试和 CI。
 
 ## 10. 下一阶段开发建议
 
-Phase 4 代码与 HTTP/数据库自动验收已闭环。下一阶段按以下顺序处理：
+Phase 4 基础任务已闭环；Phase 5 基础闭环不等于所有扩展/生产要求完成。下一阶段先修正第 8 节风险，再扩展功能，不重复开发已有能力：
 
-0. 2026-09-27 新增事项中，账号切换表单清理、地点级固定到访时间窗首版和可感知 LLM 行程助手均已完成。按“Web 初级、微信小程序登录中阶、软件端最终目标”推进：下一核心任务是正式 Web 认证/安全基线，并把账号模型设计为可绑定微信等多个登录提供方；UI 重构暂不优先。社媒链接合规读取仍为调研项，自动导入视接口/授权能力列为 P2。
+1. P0：明确 Agent 导入原文保存策略，实施最小化保存与到期清理；梳理内层/外层提交，设计执行幂等、租约恢复及 Trip 版本并发保护，并补真实数据库故障/并发测试。
+2. P1：修复多地点 action 被去重、状态首次插入竞争和历史清空语义；隔离 E2E 数据并确保失败清理。验收必须包括多个地点同批修改、并发领取、执行中断、超期和重启。
+3. P1：建立正式 Web 认证/安全基线（手机号所有权验证或明确选择其他提供方、可过期/可撤销 session、服务端退出、生产 CORS/DEBUG、限流及安全测试）。账号模型预留多提供方绑定；微信小程序是中阶目标，软件端是最终方向，当前优先 Web/API，不提前开发原生壳。
+4. P2：方案差量比较、严格时间窗策略、持久化地图预算/缓存与跨进程同步；社媒链接自动读取先调研官方接口/授权方案，不绕过平台限制。DeepSeek 重复前缀真实付费缓存实验尚未执行，需单独确认预算。
+5. UI 大改按用户意愿暂缓；后续先补 1280×720、账号切换、多端协作、评价/偏好保存清空的浏览器回归，再做信息架构/组件拆分与 CI。
+
+以下为已完成的历史排期核对，不是新的待开发清单：
+
+0. 2026-09-27 新增事项中，账号切换表单清理、地点级固定到访时间窗首版和可感知 LLM 行程助手均已完成；正式认证和合规社媒链接自动导入尚未完成。
 1. 已完成首批：统一 Trip 主方案类型与多人客户端语义，隔离共同约点/多地点结果和地图图层，并为约点 Top 3 增加路线步骤与 geometry。
 2. 已完成首版文本地点消歧：使用城市上下文和 POI 多候选，非唯一精确结果必须人工确认。
 3. 已完成高德 `10021` 首版保护：首次超限后进程内熔断 15 分钟，并提供需登录的无敏感信息调用统计；后续仍需持久化预算、缓存和控制台配额监控。
@@ -239,9 +286,9 @@ Phase 4 代码与 HTTP/数据库自动验收已闭环。下一阶段按以下顺
 3. `docs_private/出行规划Agent-产品与技术方案.md`：产品总目标和阶段边界。
 4. `docs_private/Phase2-多人多地点联合路线设计.md`：当前核心路线语义、算法和约束。
 5. `docs_private/Phase3-分享文本与地点知识设计.md`：分享链接、规则/LLM 合并与人工确认设计。
-6. `docs_private/Phase4-历史反馈与个性化设计.md`：下一阶段已确认方案。
+6. `docs_private/Phase4-历史反馈与个性化设计.md`、`docs_private/Phase5-Agent对话整合设计.md`：已完成基础范围与后续 Agent 设计。
 7. `docs_private/recording.md`：历史修改和验证记录；注意早期顶部进度可能过时，应以靠后的记录和当前代码为准。
-8. `app/models.py`、`app/services/access.py`、`app/routers/trips.py`、`app/routers/itineraries.py`、`frontend/index.html`、`tests/test_phase1.py`、`test_e2e.py`：Phase 4A-1 的直接影响范围。
+8. `app/models.py`、`app/routers/agent.py`、`app/services/agent_assistant.py`、`app/services/itinerary.py`、`migrations/versions/0009_agent_state.py`、`app/security.py`、`app/services/ws.py`：当前 Agent/安全风险的直接核查范围；再读 `frontend/index.html`、`tests/test_phase1.py`、`test_e2e.py` 及对应业务路由。
 
 开始修改前还必须执行 `git status --short`，确认没有覆盖用户未提交工作。
 
@@ -253,14 +300,36 @@ Phase 4 代码与 HTTP/数据库自动验收已闭环。下一阶段按以下顺
 4. **真实路线优先、直线估算只降级。** 高德成功时保存道路/公交 geometry 和步骤；失败时明确提示不可导航，避免把估算伪装成真实结果。
 5. **规划结果使用版本快照。** 任何影响规划的输入变化都会递增 `input_version`，旧方案不可确认，防止用户确认与当前地点/时间不一致的路线。
 6. **`must_visit` 不可被时间优化器跳过。** 用户明确意图优先于自动优化；只有 `optional` 可以在时间不足时舍弃并说明原因。
-7. **LLM 只是可选解析增强。** 地点写入仍需 schema 校验、地理编码和人工确认；LLM 失败回退确定性规则，不能直接控制 Trip 或生成路线事实。
+7. **LLM 负责理解与草案，确定性服务负责事实与执行。** 已由可选文本提取扩展到对话编排；地点写入仍需 schema、地理编码和人工确认，路线事实来自规划服务，最终确认独立执行。草案不能绕过权限和输入版本检查。
 8. **高德链接确定性解析优先于 LLM。** 短链/POI 参数包含明确地点事实，成本更低、结果更稳定；LLM 主要补自然语言地点提取。
-9. **不默认保存 LLM 原始输入。** 文本可能包含聊天内容和个人信息；Phase 4 反馈只保存必要的结构化候选及用户动作，正式隐私授权前不积累原文训练数据。
+9. **原文最小化是设计目标，不是当前全链路保证。** Phase 4 反馈只保存必要的结构化候选及动作，不积累原文训练数据；Agent 原始问答仅短期内存保存，但导入草案的 `import_text` 当前落库，须按第 8 节修正，不能宣称所有原文均未持久化。
 10. **当前允许同账号多会话。** 在产品形态和正式账号体系未确定前，不贸然加入单设备踢出机制；`BroadcastChannel` 只解决同一浏览器标签的状态一致性。
 11. **Phase 4 将“确认”与“完成”拆开。** 路线确认只是锁定计划，实际完成后才适合收集反馈和生成历史偏好；混用 `finished` 会污染行为数据。
 12. **私有设计文档与公开交接分离。** `docs_private/` 被 Git 忽略，用于内部记录和评测数据；本文件位于 `docs/`，可随仓库交接，但不得包含 `.env`、Key、密码或 token。
 
 ## 常用启动与验收命令
+
+### 本轮 Git 快照与交接注意事项
+
+开始核查时 `git status --short` 如下，本轮只进一步编辑本文件，其他改动均为既有工作，未提交、未回退：
+
+```text
+ M .gitignore
+ M app/models.py
+ M app/routers/agent.py
+ M app/services/agent_assistant.py
+ M app/services/itinerary.py
+ M docs/PROJECT_HANDOFF.md
+ M frontend/index.html
+ M scripts/verify_trip_deleted.py
+ M test_e2e.py
+ M tests/test_phase1.py
+?? migrations/versions/0009_agent_state.py
+```
+
+最近提交为 `86a9fe2`（阶段性完成提交20260927），此前为 `fc804c0`（Phase4阶段性完成待验证20260922）、`acc201c`（Phase阶段性提交）。工作区实现不能与这些已提交基线混为一谈。`docs_private/` 和 `/docs/` 有忽略规则，但本交接文件已经被 Git 跟踪；私有文档不会自动随仓库交付。不得记录或提交 `.env`、实际 Key、密码、token。
+
+### 命令
 
 ```powershell
 conda activate route_plan
@@ -274,5 +343,6 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 conda activate route_plan
 python -m unittest discover -s tests -v
 python -m compileall -q app tests test_e2e.py scripts
-python test_e2e.py http://127.0.0.1:8000
 ```
+
+HTTP E2E 会写数据库和固定账号偏好。先隔离测试账号/数据库或实现完整恢复后，再运行 `python test_e2e.py http://127.0.0.1:8000`；不要为了交接核查直接对用户数据重复执行。

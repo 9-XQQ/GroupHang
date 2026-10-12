@@ -135,6 +135,27 @@ def main() -> None:
         raise RuntimeError(f"Phase 2A 地点状态或投票不正确：{listed_a}")
     if not listed_a.get("visit_window_start") or not listed_a.get("visit_window_end"):
         raise RuntimeError(f"地点固定到访时间窗未持久化：{listed_a}")
+    destination_chat = request(
+        "POST", f"/trips/{trip_id}/assistant/chat",
+        {"message": "请把故宫停留时间改成110分钟"}, token_a,
+    )
+    if not destination_chat.get("planning_readiness") or "route_summary" not in destination_chat:
+        raise RuntimeError(f"Agent 未返回确定性规划诊断：{destination_chat}")
+    if not destination_chat.get("proposal_id"):
+        raise RuntimeError(f"Agent 未生成地点修改草案：{destination_chat}")
+    destination_execution = request(
+        "POST", f"/trips/{trip_id}/assistant/proposals/execute",
+        {"proposal_id": destination_chat["proposal_id"]}, token_a,
+    )
+    if not any(
+        item.get("type") == "update_destination" and item.get("status") == "completed"
+        for item in destination_execution.get("executed", [])
+    ):
+        raise RuntimeError(f"Agent 地点修改未执行：{destination_execution}")
+    updated_destinations = request("GET", f"/trips/{trip_id}/destinations", token=token_a)["destinations"]
+    updated_a = next(item for item in updated_destinations if item["id"] == destination_a["id"])
+    if updated_a["expected_stay_min"] != 110:
+        raise RuntimeError(f"Agent 地点停留时间修改未持久化：{updated_a}")
     print("      Phase 2A 地点协作接口验证通过\n")
 
     # 4. 两人各自填出发点 + 出行方式
@@ -176,6 +197,20 @@ def main() -> None:
             "optimization_objective": "total_time",
         }, token_a,
     )
+    comparison_chat = request(
+        "POST", f"/trips/{trip_id}/assistant/chat",
+        {"message": "请比较均衡、总时间和总距离三种路线方案，不要生成或保存正式路线"}, token_a,
+    )
+    comparison_execution = request(
+        "POST", f"/trips/{trip_id}/assistant/proposals/execute",
+        {"proposal_id": comparison_chat["proposal_id"]}, token_a,
+    )
+    variants = (comparison_execution.get("comparison") or {}).get("comparisons") or []
+    if {item.get("objective") for item in variants} != {"balanced", "total_time", "distance"}:
+        raise RuntimeError(f"Agent 候选路线比较不完整：{comparison_execution}")
+    if comparison_execution["comparison"].get("saved") is not False:
+        raise RuntimeError("Agent 候选路线比较不应保存正式方案")
+    expect_http_error(404, "GET", f"/trips/{trip_id}/itinerary-plans/latest", token=token_a)
     itinerary = request("POST", f"/trips/{trip_id}/itinerary-plans", {}, token_a)
     planned_ids = {stop["destination_id"] for stop in itinerary["ordered_stops"]}
     if planned_ids != {destination_a["id"], destination_b["id"]}:
@@ -356,6 +391,10 @@ def main() -> None:
     final_plan = assistant_execution.get("itinerary")
     if not final_plan or not final_plan.get("plan_id"):
         raise RuntimeError(f"Phase 5 未通过确认草案生成路线：{assistant_execution}")
+    if not assistant_execution.get("executed") or any(
+        item.get("status") != "completed" for item in assistant_execution["executed"]
+    ):
+        raise RuntimeError(f"Phase 5 草案逐项执行状态异常：{assistant_execution}")
     cleared_history = request("DELETE", f"/trips/{trip_id}/assistant/history", token=token_a)
     if not cleared_history.get("cleared"):
         raise RuntimeError("Phase 5 对话历史清空失败")
