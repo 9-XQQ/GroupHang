@@ -15,6 +15,7 @@
     python test_e2e.py http://127.0.0.1:8000
 """
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -59,11 +60,21 @@ def expect_http_error(
 
 
 def login(phone: str, name: str) -> tuple[str, int]:
-    resp = request("POST", "/auth/login", {"phone": phone, "name": name})
-    return resp["token"], resp["user"]["id"]
+    # Disposable-schema wrapper only; fixed test identities are not real accounts.
+    resp = request("POST", "/auth/register", {
+        "username": "e2e_" + phone, "password": "E2e-pass2026!", "name": name,
+    })
+    logged = request("POST", "/auth/password/login", {
+        "username": "e2e_" + phone, "password": "E2e-pass2026!",
+    })
+    if logged["user"]["id"] != resp["user"]["id"]:
+        raise RuntimeError("密码登录未返回注册时的同一账号")
+    return logged["token"], logged["user"]["id"]
 
 
 def main() -> None:
+    if os.getenv("E2E_ISOLATED_DB") != "1":
+        raise RuntimeError("请通过 tests.test_agent_process 的隔离包装器运行，禁止连接现有账号数据库")
     print(f"==> 目标服务: {BASE_URL}\n")
 
     # 1. 登录两个用户

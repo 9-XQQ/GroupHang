@@ -28,6 +28,11 @@ class ExplicitPreferences(BaseModel):
         return cleaned
 
 
+class UserProfileUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    name: str = Field(min_length=1, max_length=50)
+
+
 class UserPreferencesUpdate(BaseModel):
     personalization_enabled: bool = True
     explicit: ExplicitPreferences = Field(default_factory=ExplicitPreferences)
@@ -39,13 +44,49 @@ class Location(BaseModel):
     address: str | None = Field(default=None, max_length=300)
 
 
+class SmsCodeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    phone: str = Field(pattern=r"^1[3-9][0-9]{9}$")
+
+
 class LoginRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     phone: str | None = Field(default=None, pattern=r"^1[3-9]\d{9}$")
+    code: str | None = Field(default=None, pattern=r"^[0-9]{6}$")
+    browser: bool = False
     wechat_code: str | None = Field(default=None, min_length=1, max_length=256)
     name: str | None = Field(default=None, min_length=1, max_length=50)
 
+
+
+class PasswordLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]{3,32}$")
+    password: str = Field(min_length=1, max_length=128, repr=False)
+    browser: bool = False
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
+
+class PasswordRegisterRequest(PasswordLoginRequest):
+    password: str = Field(min_length=8, max_length=15, repr=False)
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class PasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=128, repr=False)
+    new_password: str = Field(min_length=8, max_length=15, repr=False)
+    browser: bool = False
 
 class TripCreate(BaseModel):
     title: str = Field(min_length=1, max_length=100)
@@ -61,6 +102,7 @@ class TripWorkflowUpdate(BaseModel):
 
 
 class ParticipantUpdate(BaseModel):
+    share_preferences: bool = False
     start_location: Location
     transport_mode: Literal["driving", "transit"]
     available_from: datetime | None = None
@@ -197,6 +239,7 @@ class PlaceParseFeedbackCreate(BaseModel):
 
 
 class PlanningSettingsUpdate(BaseModel):
+    return_location: Location | None = None
     planned_start_at: datetime
     planned_end_at: datetime
     group_transport_mode: Literal["driving", "transit"] = "transit"
@@ -218,6 +261,7 @@ class ConfirmPlanRequest(BaseModel):
 
 
 class AgentChatRequest(BaseModel):
+    discovery: "DiscoveryRequest | None" = None
     model_config = ConfigDict(str_strip_whitespace=True)
 
     message: str = Field(min_length=2, max_length=4000)
@@ -246,3 +290,100 @@ class DestinationFeedbackUpdate(BaseModel):
         if invalid:
             raise ValueError(f"不支持的评价标签：{sorted(invalid)}")
         return tags
+
+
+class SavedPlaceCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", allow_inf_nan=False)
+    name: str = Field(min_length=1, max_length=120)
+    city: str = Field(default="", max_length=30)
+    address: str | None = Field(default=None, max_length=300)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    category: str | None = Field(default=None, max_length=80)
+    poi_id: str | None = Field(default=None, min_length=1, max_length=100)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    private_note: str = Field(default="", max_length=2000)
+    expected_stay_min: int = Field(default=60, ge=5, le=720)
+
+    @field_validator("tags")
+    @classmethod
+    def clean_tags(cls, values):
+        values = [v.strip() for v in values]
+        if any(not v or len(v) > 30 for v in values):
+            raise ValueError("标签需1～30字符")
+        return list(dict.fromkeys(values))
+
+
+class SavedPlaceUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    revision: int = Field(ge=1)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    private_note: str = Field(default="", max_length=2000)
+    expected_stay_min: int = Field(default=60, ge=5, le=720)
+    clean_tags = field_validator("tags")(SavedPlaceCreate.clean_tags.__func__)
+
+
+class DestinationCommentBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    content: str = Field(min_length=1, max_length=1000)
+
+
+class PlaceSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    saved_place_id: int | None = Field(default=None, gt=0)
+    revision: int | None = Field(default=None, ge=1)
+    place: SavedPlaceCreate | None = None
+
+    @model_validator(mode="after")
+    def valid_source(self):
+        if (self.saved_place_id is None) == (self.place is None):
+            raise ValueError("选择一个收藏或确认的地点")
+        if self.saved_place_id is not None and self.revision is None:
+            raise ValueError("收藏需要版本")
+        return self
+
+
+class PlaceBatchImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    planning_settings: PlanningSettingsUpdate | None = None
+    confirm_for_planning: bool = False
+    expected_version: int = Field(ge=1)
+    places: list[PlaceSelection] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def valid_planning_handoff(self):
+        if self.confirm_for_planning != (self.planning_settings is not None):
+            raise ValueError("准备路线需同时提供地点确认和规划参数")
+        return self
+
+
+class DiscoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, allow_inf_nan=False)
+    scenario: Literal["meal", "brand", "afternoon"] | None = None
+    message: str = Field(default="", max_length=2000)
+    city: str = Field(default="", max_length=30)
+    brand: str = Field(default="", max_length=60)
+    anchor: Location | None = None
+    anchor_name: str = Field(default="", max_length=120)
+    radius_km: float = Field(default=5, gt=0, le=20)
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    tags: list[str] = Field(default_factory=list, max_length=10)
+    saved_only: bool = False
+    include_preferences: bool = True
+    return_to_anchor: bool = False
+    stay_min: int = Field(default=60, ge=5, le=240)
+    clean_tags = field_validator("tags")(SavedPlaceCreate.clean_tags.__func__)
+
+    @model_validator(mode="after")
+    def valid_times(self):
+        for value in (self.start_at, self.end_at):
+            if value and value.tzinfo is None:
+                raise ValueError("规划时间必须带时区")
+        if self.start_at and self.end_at:
+            if not 0 < (self.end_at - self.start_at).total_seconds() <= 86400:
+                raise ValueError("时间区间必须为24小时以内")
+        return self
+
+
+AgentChatRequest.model_rebuild()

@@ -34,3 +34,17 @@ async def require_trip_active(db: AsyncSession, trip_id: int) -> Trip:
             raise HTTPException(status_code=409, detail="trip 已完成，历史记录不可修改")
         raise HTTPException(status_code=409, detail="trip 已确认锁定，请由发起人点击“重新编辑”后再修改")
     return trip
+
+
+async def lock_trip(db: AsyncSession, trip_id: int) -> Trip:
+    """Serialize Trip writers and refresh any identity-map copy loaded for auth."""
+    trip = (await db.execute(select(Trip).where(Trip.id == trip_id)
+        .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+    if trip is None:
+        raise HTTPException(status_code=404, detail="trip 不存在")
+    return trip
+
+
+async def lock_trip_active(db: AsyncSession, trip_id: int) -> Trip:
+    await lock_trip(db, trip_id)
+    return await require_trip_active(db, trip_id)

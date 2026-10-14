@@ -30,6 +30,7 @@ class AgentAction(BaseModel):
     visit_status: Literal["candidate", "must_visit", "optional", "excluded"] | None = None
     visit_window_start: datetime | None = None
     visit_window_end: datetime | None = None
+    clear_visit_window: bool = False
 
     @model_validator(mode="after")
     def validate_action(self):
@@ -44,10 +45,14 @@ class AgentAction(BaseModel):
                 raise ValueError("结束时间必须晚于开始时间")
         if self.type == "prepare_place_import" and (not self.import_text or len(self.import_text.strip()) < 2):
             raise ValueError("地点导入草案必须包含待解析文本")
+        if self.clear_visit_window and self.type != "update_destination":
+            raise ValueError("清除时间窗只能用于修改地点")
+        if self.clear_visit_window and (self.visit_window_start is not None or self.visit_window_end is not None):
+            raise ValueError("不能同时清除和设置地点固定时间窗")
         if self.type == "update_destination":
             if self.destination_id is None:
                 raise ValueError("修改地点必须给出 destination_id")
-            if all(value is None for value in (
+            if not self.clear_visit_window and all(value is None for value in (
                 self.expected_stay_min, self.visit_status,
                 self.visit_window_start, self.visit_window_end,
             )):
@@ -62,6 +67,19 @@ class AgentAction(BaseModel):
                 if (self.visit_window_end - self.visit_window_start).total_seconds() > 24 * 3600:
                     raise ValueError("单个地点固定到访时间窗不能超过 24 小时")
         return self
+
+
+def normalize_actions(actions: list[AgentAction]) -> list[AgentAction]:
+    """Keep every destination edit in order; singleton actions use the last value."""
+    order = {
+        "switch_workflow": 0, "update_planning_settings": 1, "update_destination": 2,
+        "prepare_place_import": 3, "compare_itineraries": 4, "generate_itinerary": 5,
+    }
+    actions = [action.model_copy(update={"import_text": None})
+               if action.type != "prepare_place_import" else action for action in actions]
+    singletons = {action.type: action for action in actions if action.type != "update_destination"}
+    edits = [action for action in actions if action.type == "update_destination"]
+    return sorted([*singletons.values(), *edits], key=lambda action: order[action.type])
 
 
 class AgentModelAnswer(BaseModel):
@@ -86,6 +104,7 @@ class AgentAssistant:
     def __init__(self) -> None:
         self._proposals: dict[str, StoredProposal] = {}
         self._conversations: dict[tuple[int, int], tuple[float, list[dict]]] = {}
+        self._history_epochs: dict[tuple[int, int], str] = {}
 
     @staticmethod
     def system_prompt() -> str:
@@ -101,6 +120,7 @@ class AgentAssistant:
             "用户要求从文字提取或添加地点时，用 prepare_place_import 并把用户原文放入 import_text；"
             "用户明确要求生成当前路线时用 generate_itinerary。地点仍需后续高德与人工确认。最多四个 action。"
             "修改已有地点的停留时长、固定到访时间或必去/可选状态时使用 update_destination，并且只能使用上下文中真实存在的 destination_id；"
+            "明确要求取消某地点固定到访时间窗时，使用 update_destination 并设置 clear_visit_window=true，不同时提供时间值；未提到清除时保持false。"
             "用户要求比较、对比不同路线方案时使用 compare_itineraries；该操作只模拟，不保存正式路线。"
             "优先依据 planning_readiness 和 route_summary 回答能否规划、等待、迟到、固定时间窗冲突及路线是否为估算；"
             "不得把 estimated=false 的真实路线说成直线估算，也不得忽略 missing 列表。"
@@ -213,7 +233,10 @@ class AgentAssistant:
             item for item in context.get("destinations", [])
             if item.get("name") and item["name"] in message
         ]
-        if explicit_change and len(matched_destinations) == 1:
+        clear_window = bool(re.search(r"(?:取消|清除|移除).*(?:固定到访时间|固定时间窗|到访时间窗)", message))
+        if re.search(r"不要|别|无需|不需要|是否|能否|可以|怎么|如何|[？?]|吗", message):
+            clear_window = False
+        if (explicit_change or clear_window) and len(matched_destinations) == 1:
             destination = matched_destinations[0]
             stay_match = re.search(r"停留(?:时间)?(?:改成|设置为|设为)?\s*(\d{1,3})\s*分钟", message)
             status = None
@@ -226,10 +249,10 @@ class AgentAssistant:
             stay = int(stay_match.group(1)) if stay_match else None
             if stay is not None and not 5 <= stay <= 720:
                 stay = None
-            if stay is not None or status is not None:
+            if stay is not None or status is not None or clear_window:
                 actions.append(AgentAction(
                     type="update_destination", destination_id=destination["id"],
-                    expected_stay_min=stay, visit_status=status,
+                    expected_stay_min=stay, visit_status=status, clear_visit_window=clear_window,
                 ))
         if re.search(r"(?:解析|导入|添加).{0,8}(?:地点|餐厅|景点|店)", message):
             actions.append(AgentAction(type="prepare_place_import", import_text=message[:4000]))
@@ -238,6 +261,12 @@ class AgentAssistant:
         if re.search(r"(?:比较|对比)[^。！？\n]{0,40}(?:路线|方案)|(?:路线|方案)[^。！？\n]{0,40}(?:比较|对比)", message):
             actions.append(AgentAction(type="compare_itineraries"))
         return actions[:4]
+
+    def sync_history_epoch(self, trip_id: int, user_id: int, epoch: str) -> None:
+        key = (trip_id, user_id)
+        if self._history_epochs.get(key) != epoch:
+            self.clear_history(trip_id, user_id)
+            self._history_epochs[key] = epoch
 
     def history(self, trip_id: int, user_id: int) -> list[dict]:
         self.cleanup()
@@ -295,15 +324,7 @@ class AgentAssistant:
         self.cleanup()
         if not actions:
             return None
-        order = {
-            "switch_workflow": 0, "update_planning_settings": 1,
-            "update_destination": 2, "prepare_place_import": 3,
-            "compare_itineraries": 4, "generate_itinerary": 5,
-        }
-        unique: dict[str, AgentAction] = {}
-        for action in actions:
-            unique[action.type] = action
-        actions = sorted(unique.values(), key=lambda action: order[action.type])
+        actions = normalize_actions(actions)
         proposal_id = str(uuid4())
         self._proposals[proposal_id] = StoredProposal(
             proposal_id, trip_id, user_id, input_version,

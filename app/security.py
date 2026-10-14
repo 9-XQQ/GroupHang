@@ -1,58 +1,61 @@
-"""轻量登录态：MVP 用文件持久化的 token，不做正式 JWT。
+"""Database-backed opaque sessions; legacy token files are never trusted."""
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
 
-token -> user_id 落盘到项目根目录 .token_store.json，服务重启后仍有效，
-避免开发期 uvicorn --reload 重启导致已登录会话失效。
-正式环境应替换为 Redis / JWT。
-"""
-import json
-import uuid
-from pathlib import Path
-
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .config import settings
 from .db import get_db
-from .models import User
+from .models import AuthSession, User
 
-# token -> user_id，文件持久化，服务重启后仍有效
-_TOKEN_FILE = Path(__file__).resolve().parent.parent / ".token_store.json"
-
-
-def _load_tokens() -> dict[str, int]:
-    if _TOKEN_FILE.exists():
-        try:
-            data = json.loads(_TOKEN_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+COOKIE_NAME = "trip_session"
 
 
-token_store: dict[str, int] = _load_tokens()
+def token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _save_tokens() -> None:
-    try:
-        _TOKEN_FILE.write_text(json.dumps(token_store), encoding="utf-8")
-    except OSError:
-        pass
+async def issue_token(db: AsyncSession, user_id: int) -> tuple[str, datetime]:
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(days=settings.auth_session_days)
+    db.add(AuthSession(token_hash=token_digest(token), user_id=user_id, expires_at=expires))
+    return token, expires
 
 
-def issue_token(user_id: int) -> str:
-    token = uuid.uuid4().hex
-    token_store[token] = user_id
-    _save_tokens()
-    return token
+async def session_for_token(db: AsyncSession, token: str | None) -> AuthSession | None:
+    if not token or len(token) > 256:
+        return None
+    return (await db.execute(select(AuthSession).where(
+        AuthSession.token_hash == token_digest(token),
+        AuthSession.revoked_at.is_(None),
+        AuthSession.expires_at > datetime.now(timezone.utc),
+    ))).scalar_one_or_none()
 
 
-async def get_current_user(
-    x_token: str | None = Header(default=None),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    if not x_token or x_token not in token_store:
-        raise HTTPException(status_code=401, detail="未登录或 token 无效")
-    user = await db.get(User, token_store[x_token])
+def request_token(request: Request) -> str | None:
+    return request.headers.get("x-token") or request.cookies.get(COOKIE_NAME)
+
+
+def check_browser_origin(request: Request) -> None:
+    """Custom header + origin validation protects cookie and login mutations."""
+    origin = request.headers.get("origin")
+    expected = str(request.base_url).rstrip("/")
+    if origin and origin != expected and origin not in settings.cors_origins:
+        raise HTTPException(403, "请求来源不受信任")
+    if request.cookies.get(COOKIE_NAME) and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        if request.headers.get("x-requested-with") != "TripPlanner":
+            raise HTTPException(403, "缺少请求校验头")
+
+
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
+    check_browser_origin(request)
+    session = await session_for_token(db, request_token(request))
+    if session is None:
+        raise HTTPException(401, "登录已过期，请重新登录")
+    user = await db.get(User, session.user_id)
     if user is None:
-        raise HTTPException(status_code=401, detail="用户不存在")
+        raise HTTPException(401, "用户不存在")
     return user

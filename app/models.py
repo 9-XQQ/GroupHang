@@ -1,5 +1,6 @@
 """ORM 模型（Phase 1 子集）。坐标用普通数值/JSONB 字段，暂不引入 PostGIS。"""
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, SmallInteger, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -31,6 +32,7 @@ class Trip(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")  # active | confirmed | completed
     default_mode: Mapped[str] = mapped_column(String(20), default="transit")  # driving | transit
     group_transport_mode: Mapped[str] = mapped_column(String(20), default="transit")
+    return_location: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     planned_start_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     planned_end_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     optimization_objective: Mapped[str] = mapped_column(String(20), default="balanced")
@@ -50,6 +52,7 @@ class TripParticipant(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"))
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    share_preferences: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     role: Mapped[str] = mapped_column(String(10), default="member")  # creator | member
     start_location: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {lat,lng,address}
     transport_mode: Mapped[str] = mapped_column(String(20), default="transit")  # driving | transit
@@ -182,6 +185,9 @@ class AgentProposal(Base):
     input_version: Mapped[int] = mapped_column(Integer)
     actions: Mapped[list] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -199,7 +205,87 @@ class AgentConversationState(Base):
     trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     last_actions: Mapped[list] = mapped_column(JSONB, default=list)
+    history_epoch: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class SmsChallenge(Base):
+    __tablename__ = "sms_challenges"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    phone_hash: Mapped[str] = mapped_column(String(64), index=True)
+    ip_hash: Mapped[str] = mapped_column(String(64), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
+
+class PasswordCredential(Base):
+    __tablename__ = "password_credentials"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    username: Mapped[str] = mapped_column(String(32), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AuthRateLimit(Base):
+    __tablename__ = "auth_rate_limits"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer)
+    window_started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), index=True)
+
+
+class SavedPlace(Base):
+    __tablename__ = "saved_places"
+    __table_args__ = (UniqueConstraint("user_id", "place_key", name="uq_saved_place_owner_key"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    place_key: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(120))
+    city: Mapped[str] = mapped_column(String(30), default="")
+    address: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    lat: Mapped[float] = mapped_column(Float)
+    lng: Mapped[float] = mapped_column(Float)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    poi_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tags: Mapped[list] = mapped_column(JSONB, default=list)
+    private_note: Mapped[str] = mapped_column(String(2000), default="")
+    expected_stay_min: Mapped[int] = mapped_column(Integer, default=60)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DestinationComment(Base):
+    __tablename__ = "destination_comments"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    destination_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trip_destinations.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    content: Mapped[str] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class TripPlaceImport(Base):
+    __tablename__ = "trip_place_imports"
+    __table_args__ = (UniqueConstraint("trip_id", "user_id", "source_key", name="uq_trip_place_import"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    source_key: Mapped[str] = mapped_column(String(64))
+    destination_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trip_destinations.id", ondelete="CASCADE"))

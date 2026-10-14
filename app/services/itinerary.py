@@ -111,6 +111,7 @@ async def plan_itinerary(
     group_mode: str,
     objective: str,
     shared_route_cache: dict | None = None,
+    return_location: dict | None = None,
 ) -> dict:
     """返回第一站、个人赴约、共同顺序和时间线。"""
     route_cache: dict[tuple, asyncio.Task] = shared_route_cache if shared_route_cache is not None else {}
@@ -144,6 +145,17 @@ async def plan_itinerary(
         for i in range(size) for j in range(size) if i != j
     ))
 
+    return_routes = []
+    if return_location:
+        async def return_route(destination):
+            origin, target = _coord(destination), _coord(return_location)
+            if origin == target:
+                return {"duration_min": 0, "distance_km": 0, "polyline": [], "steps": [],
+                        "estimated": False, "fallback_reason": None}
+            return await cached_route(origin, target, group_mode)
+        return_routes = await asyncio.gather(*(return_route(d) for d in destinations))
+    deadline = min([end_at, *(p["available_until"] for p in participants if p.get("available_until"))]) if return_location else end_at
+
     best = None
     must_first = [i for i, item in enumerate(destinations) if item["visit_status"] == "must_visit"]
     first_candidates = must_first or list(range(size))
@@ -173,11 +185,17 @@ async def plan_itinerary(
         schedule = _schedule_order(order, destinations, candidate_group_start, duration_matrix)
         route_minutes = _route_cost(order, duration_matrix)
         route_km = _route_cost(order, distance_matrix)
+        if return_location:
+            route_minutes += return_routes[order[-1]]["duration_min"]
+            route_km += return_routes[order[-1]]["distance_km"]
         availability_penalty = sum(
             1_000_000 for person, value in zip(participants, arrivals)
             if person.get("available_until") and value["arrival_at"] > person["available_until"]
         )
         window_penalty = schedule["window_penalty"] * 1_000_000
+        if return_location:
+            finish = schedule["end"] + timedelta(minutes=return_routes[order[-1]]["duration_min"])
+            window_penalty += max(0, (finish - deadline).total_seconds() / 60) * 1_000_000
         if objective == "distance":
             score = route_km + max_arrival / 60.0 + availability_penalty + window_penalty
         elif objective == "total_time":
@@ -193,7 +211,10 @@ async def plan_itinerary(
     warnings = []
 
     def projected_end(current_order: list[int]) -> datetime:
-        return _schedule_order(current_order, destinations, group_start, duration_matrix)["end"]
+        finish = _schedule_order(current_order, destinations, group_start, duration_matrix)["end"]
+        if return_location:
+            finish += timedelta(minutes=return_routes[current_order[-1]]["duration_min"])
+        return finish
 
     # 固定时间窗冲突时，只允许剔除可选地点；优先选择能最大幅度降低迟到的地点。
     while _schedule_order(order, destinations, group_start, duration_matrix)["window_penalty"] > 0:
@@ -216,7 +237,7 @@ async def plan_itinerary(
         })
 
     # 超时时优先剔除节省时间最多的可选点；必去点和第一站绝不移除。
-    while projected_end(order) > end_at and len(order) > 2:
+    while projected_end(order) > deadline and len(order) > 2:
         removable = []
         for position in range(1, len(order)):
             idx = order[position]
@@ -227,6 +248,9 @@ async def plan_itinerary(
             if position + 1 < len(order):
                 next_idx = order[position + 1]
                 saving += duration_matrix[idx][next_idx] - duration_matrix[prev_idx][next_idx]
+            if return_location:
+                shortened = order[:position] + order[position + 1:]
+                saving = (projected_end(order) - projected_end(shortened)).total_seconds() / 60
             removable.append((saving, position, idx))
         if not removable:
             break
@@ -324,6 +348,26 @@ async def plan_itinerary(
             "visit_window_end": window_end.isoformat() if window_end else None,
             "wait_min": wait_min,
         })
+    return_leg = None
+    if return_location:
+        last = order[-1]
+        detail = return_routes[last]
+        depart = cursor
+        cursor += timedelta(minutes=detail["duration_min"])
+        total_km += detail["distance_km"]
+        return_leg = {
+            "kind": "return", "from_destination_id": destinations[last]["id"], "to_destination_id": None,
+            "return_location": dict(return_location), "mode": group_mode,
+            "depart_at": depart.isoformat(), "arrival_at": cursor.isoformat(),
+            "travel_time_min": round(detail["duration_min"]), "distance_km": round(detail["distance_km"], 2),
+            "polyline": detail.get("polyline", []), "steps": detail.get("steps", []),
+            "estimated": detail["estimated"], "fallback_reason": detail.get("fallback_reason"),
+        }
+        route_legs.append(return_leg)
+        for person in participants:
+            if person.get("available_until") and cursor > person["available_until"]:
+                warnings.append({"code": "return_after_participant_deadline", "user_id": person["user_id"],
+                                 "message": f"返回共同终点将超过{person['name']}的个人结束时间"})
     if cursor > end_at:
         warnings.append({
             "code": "exceeds_end_time",
@@ -344,8 +388,9 @@ async def plan_itinerary(
         "first_destination_id": destinations[best["first"]]["id"],
         "participant_arrivals": participant_arrivals,
         "group_start_at": group_start.isoformat(), "ordered_stops": ordered_stops,
-        "route_legs": route_legs, "warnings": warnings,
-        "total_travel_min": round((group_start - start_at).total_seconds() / 60 + _route_cost(order, duration_matrix)),
+        "route_legs": route_legs, "return_leg": return_leg, "finish_at": cursor.isoformat(), "warnings": warnings,
+        "total_travel_min": round((group_start - start_at).total_seconds() / 60 + _route_cost(order, duration_matrix)
+                                  + (return_routes[order[-1]]["duration_min"] if return_location else 0)),
         "total_duration_min": round((cursor - start_at).total_seconds() / 60),
         "total_distance_km": round(total_km, 2),
     }

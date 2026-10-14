@@ -7,7 +7,7 @@ from ..db import get_db
 from ..models import MeetingPointResult, Trip, TripParticipant, User
 from ..schemas import MeetingPointRequest
 from ..security import get_current_user
-from ..services.access import require_trip_active, require_trip_member
+from ..services.access import lock_trip_active, require_trip_member
 from ..services.meeting_point import recommend
 from ..services.ws import manager
 
@@ -59,7 +59,7 @@ async def compute_meeting_points(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
-    trip = await require_trip_active(db, trip_id)
+    trip = await lock_trip_active(db, trip_id)
     if trip.primary_workflow != "meeting":
         raise HTTPException(status_code=409, detail="当前 Trip 主方案是多地点路线，请由发起人先切换为共同约点")
 

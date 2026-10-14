@@ -7,7 +7,7 @@ from ..db import get_db
 from ..models import TripParticipant, User
 from ..schemas import ParticipantUpdate
 from ..security import get_current_user
-from ..services.access import require_trip_active, require_trip_member
+from ..services.access import lock_trip_active, require_trip_member
 from ..services.ws import manager
 
 router = APIRouter(prefix="/trips/{trip_id}/participants", tags=["participants"])
@@ -21,7 +21,7 @@ async def update_me(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
-    await require_trip_active(db, trip_id)
+    trip = await lock_trip_active(db, trip_id)
     result = await db.execute(
         select(TripParticipant).where(
             TripParticipant.trip_id == trip_id, TripParticipant.user_id == user.id
@@ -39,13 +39,16 @@ async def update_me(
     participant.transport_mode = body.transport_mode
     participant.available_from = body.available_from
     participant.available_until = body.available_until
+    participant.share_preferences = body.share_preferences
     participant.vote_status = "submitted"
+    trip.input_version = (trip.input_version or 0) + 1
     await db.commit()
 
     await manager.broadcast(trip_id, {"type": "participants_updated", "trip_id": trip_id})
 
     return {
         "participant_id": participant.id,
+        "share_preferences": participant.share_preferences,
         "start_location": participant.start_location,
         "transport_mode": participant.transport_mode,
         "available_from": participant.available_from,
@@ -76,6 +79,7 @@ async def list_participants(
                 "start_location": p.start_location,
                 "transport_mode": p.transport_mode,
                 "vote_status": p.vote_status,
+                "share_preferences": p.share_preferences,
                 "available_from": p.available_from,
                 "available_until": p.available_until,
             }

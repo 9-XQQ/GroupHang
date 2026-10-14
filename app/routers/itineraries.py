@@ -4,11 +4,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
-from ..models import ItineraryPlan, Trip, TripDestination, TripParticipant, User
+from ..models import ItineraryPlan, Trip, User
 from ..schemas import ConfirmPlanRequest, PlanningSettingsUpdate
 from ..security import get_current_user
-from ..services.access import require_trip_active, require_trip_member
+from ..services.access import lock_trip, lock_trip_active, require_trip_member
 from ..services.itinerary import plan_itinerary
+from ..services.planning_input import load_planning_input
 from ..services.ws import manager
 
 router = APIRouter(prefix="/trips/{trip_id}", tags=["itineraries"])
@@ -23,6 +24,9 @@ def _plan_dict(plan: ItineraryPlan, trip: Trip) -> dict:
         "route_legs": plan.route_legs, "warnings": plan.warnings,
         "total_travel_min": plan.total_travel_min, "total_duration_min": plan.total_duration_min,
         "computed_at": plan.computed_at,
+        "return_leg": next((leg for leg in (plan.route_legs or []) if leg.get("kind") == "return"), None),
+        "finish_at": next((leg["arrival_at"] for leg in (plan.route_legs or []) if leg.get("kind") == "return"),
+                          plan.ordered_stops[-1]["leave_at"] if plan.ordered_stops else None),
     }
 
 
@@ -34,18 +38,21 @@ async def update_planning_settings(
     participant = await require_trip_member(db, trip_id, user)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以修改规划参数")
-    trip = await require_trip_active(db, trip_id)
+    trip = await lock_trip_active(db, trip_id)
     if trip.primary_workflow != "itinerary":
         raise HTTPException(status_code=409, detail="当前 Trip 主方案是共同约点，请由发起人先切换为多地点路线")
     trip.planned_start_at = body.planned_start_at
     trip.planned_end_at = body.planned_end_at
     trip.group_transport_mode = body.group_transport_mode
     trip.optimization_objective = body.optimization_objective
+    if "return_location" in body.model_fields_set:
+        trip.return_location = body.return_location.model_dump() if body.return_location else None
     trip.input_version = (trip.input_version or 0) + 1
     await db.commit()
     await manager.broadcast(trip_id, {"type": "planning_settings_updated", "trip_id": trip_id, "input_version": trip.input_version})
     return {
         "planned_start_at": trip.planned_start_at, "planned_end_at": trip.planned_end_at,
+        "return_location": trip.return_location,
         "group_transport_mode": trip.group_transport_mode,
         "optimization_objective": trip.optimization_objective, "input_version": trip.input_version,
     }
@@ -59,6 +66,7 @@ async def get_planning_settings(
     trip = await db.get(Trip, trip_id)
     return {
         "planned_start_at": trip.planned_start_at, "planned_end_at": trip.planned_end_at,
+        "return_location": trip.return_location,
         "group_transport_mode": trip.group_transport_mode,
         "optimization_objective": trip.optimization_objective, "input_version": trip.input_version,
     }
@@ -69,52 +77,18 @@ async def create_itinerary_plan(
     trip_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
-    trip = await require_trip_active(db, trip_id)
+    trip = await lock_trip_active(db, trip_id)
     if trip.primary_workflow != "itinerary":
         raise HTTPException(status_code=409, detail="当前 Trip 主方案是共同约点，请由发起人先切换为多地点路线")
     if not trip.planned_start_at or not trip.planned_end_at:
         raise HTTPException(status_code=409, detail="请先设置行程开始和结束时间")
 
-    part_result = await db.execute(select(TripParticipant).where(TripParticipant.trip_id == trip_id))
-    part_rows = list(part_result.scalars().all())
-    if not part_rows:
-        raise HTTPException(status_code=409, detail="至少需要 1 名参与者")
-    participants = []
-    missing = []
-    for part in part_rows:
-        person = await db.get(User, part.user_id)
-        if not part.start_location:
-            missing.append(person.name if person else str(part.user_id))
-            continue
-        participants.append({
-            "user_id": part.user_id, "name": person.name if person else "未知", "mode": part.transport_mode,
-            "lat": float(part.start_location["lat"]), "lng": float(part.start_location["lng"]),
-            "available_from": part.available_from, "available_until": part.available_until,
-        })
-    if missing:
-        raise HTTPException(status_code=409, detail=f"以下参与者尚未填写出发点：{missing}")
-
-    dest_result = await db.execute(
-        select(TripDestination).where(
-            TripDestination.trip_id == trip_id,
-            TripDestination.visit_status.in_(["must_visit", "optional"]),
-        )
-    )
-    rows = list(dest_result.scalars().all())
-    if len(rows) < 2:
-        raise HTTPException(status_code=409, detail="请至少确认 2 个必去或可选地点")
-    if len(rows) > 10:
-        raise HTTPException(status_code=409, detail="MVP 最多支持 10 个确认地点")
-    destinations = [{
-        "id": row.id, "name": row.name, "lat": row.lat, "lng": row.lng,
-        "expected_stay_min": row.expected_stay_min, "visit_status": row.visit_status,
-        "opening_hours": row.opening_hours,
-        "visit_window_start": row.visit_window_start,
-        "visit_window_end": row.visit_window_end,
-    } for row in rows]
+    inputs = await load_planning_input(db, trip)
+    participants, destinations = inputs.validate()
     result = await plan_itinerary(
         participants, destinations, trip.planned_start_at, trip.planned_end_at,
         trip.group_transport_mode, trip.optimization_objective,
+        **({"return_location": inputs.return_location} if inputs.return_location else {}),
     )
     plan = ItineraryPlan(
         trip_id=trip_id, input_version=trip.input_version, objective=trip.optimization_objective,
@@ -157,7 +131,7 @@ async def confirm_plan(
     participant = await require_trip_member(db, trip_id, user)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以确认最终方案")
-    trip = await db.get(Trip, trip_id)
+    trip = await lock_trip(db, trip_id)
     plan = await db.get(ItineraryPlan, plan_id)
     if plan is None or plan.trip_id != trip_id:
         raise HTTPException(status_code=404, detail="路线方案不存在")

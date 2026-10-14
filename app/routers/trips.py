@@ -11,7 +11,7 @@ from ..db import get_db
 from ..models import ItineraryPlan, MeetingPointResult, Trip, TripParticipant, User
 from ..schemas import JoinRequest, TripCreate, TripWorkflowUpdate
 from ..security import get_current_user
-from ..services.access import require_trip_member
+from ..services.access import lock_trip, require_trip_member
 from ..services.ws import manager
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -75,6 +75,7 @@ async def create_trip(
 
 async def _join(db: AsyncSession, trip: Trip, user: User) -> dict:
     """加入 trip（幂等），返回 {trip_id, participant_id, role}。"""
+    trip = await lock_trip(db, trip.id)
     result = await db.execute(
         select(TripParticipant).where(
             TripParticipant.trip_id == trip.id, TripParticipant.user_id == user.id
@@ -90,6 +91,7 @@ async def _join(db: AsyncSession, trip: Trip, user: User) -> dict:
         trip_id=trip.id, user_id=user.id, role="member", transport_mode=trip.default_mode
     )
     db.add(participant)
+    trip.input_version = (trip.input_version or 0) + 1
     await db.commit()
     await db.refresh(participant)
 
@@ -193,10 +195,11 @@ async def update_trip_workflow(
     participant = await require_trip_member(db, trip_id, user)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以切换 trip 主方案类型")
-    trip = await db.get(Trip, trip_id)
+    trip = await lock_trip(db, trip_id)
     if trip.status != "active":
         raise HTTPException(status_code=409, detail="已确认或完成的 trip 不能切换主方案类型")
     trip.primary_workflow = body.primary_workflow
+    trip.input_version = (trip.input_version or 0) + 1
     await db.commit()
     await manager.broadcast(
         trip_id,
@@ -214,7 +217,7 @@ async def reopen_trip(
     participant = await require_trip_member(db, trip_id, user)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以重新编辑 trip")
-    trip = await db.get(Trip, trip_id)
+    trip = await lock_trip(db, trip_id)
     if trip.status == "completed":
         raise HTTPException(status_code=409, detail="已完成 trip 不可重新编辑；如需复用请新建 trip")
     if trip.status == "active":
@@ -235,7 +238,7 @@ async def complete_trip(
     participant = await require_trip_member(db, trip_id, user)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以标记 trip 已完成")
-    trip = await db.get(Trip, trip_id)
+    trip = await lock_trip(db, trip_id)
     if trip.status != "confirmed":
         raise HTTPException(status_code=409, detail="只有已确认最终路线的 trip 可以标记完成")
     result = await db.execute(
@@ -270,7 +273,7 @@ async def delete_trip(
     participant = await require_trip_member(db, trip_id, user)
     if participant.role != "creator":
         raise HTTPException(status_code=403, detail="只有发起人可以删除 trip")
-    trip = await db.get(Trip, trip_id)
+    trip = await lock_trip(db, trip_id)
     await db.delete(trip)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
