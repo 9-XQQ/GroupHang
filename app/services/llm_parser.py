@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from .agent_trace import traced_stage, annotate_stage
 from collections import Counter
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -137,6 +138,7 @@ class LlmPlaceParser:
         validated = LlmPlaceResponse.model_validate(payload)
         return [place.model_dump() for place in validated.places]
 
+    @traced_stage("model.parse_places", outcome="parse")
     async def parse(self, text: str) -> tuple[list[dict], str | None]:
         self._last_usage.set(None)
         if not self.available:
@@ -182,15 +184,18 @@ class LlmPlaceParser:
             response_payload = response.json()
             usage = self.extract_usage(response_payload)
             self._last_usage.set(usage)
+            annotate_stage(usage=usage)
             self._record_response(usage, api_style, round((time.perf_counter() - started_at) * 1000))
             content = self._extract_content(response_payload, api_style)
             places = self.parse_json_content(content)
             self._request_stats["succeeded"] += 1
             return places, None
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+            annotate_stage(error_type=type(exc).__name__)
             self._request_stats["failed"] += 1
             return [], f"LLM 解析失败：{type(exc).__name__}"
 
+    @traced_stage("model.complete_json", outcome="model")
     async def complete_json(self, system: str, prompt: str) -> tuple[dict | None, str | None]:
         """执行一次受控 JSON 对话，供 Agent 层复用；调用方仍须做专用 schema 校验。"""
         self._last_usage.set(None)
@@ -226,6 +231,7 @@ class LlmPlaceParser:
             response_payload = response.json()
             usage = self.extract_usage(response_payload)
             self._last_usage.set(usage)
+            annotate_stage(usage=usage)
             self._record_response(usage, api_style, round((time.perf_counter() - started_at) * 1000))
             content = self._extract_content(response_payload, api_style).strip()
             fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", content, re.I | re.S)
@@ -235,6 +241,7 @@ class LlmPlaceParser:
             self._request_stats["agent_succeeded"] += 1
             return result, None
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            annotate_stage(error_type=type(exc).__name__)
             self._request_stats["agent_failed"] += 1
             return None, f"LLM 助手失败：{type(exc).__name__}"
 

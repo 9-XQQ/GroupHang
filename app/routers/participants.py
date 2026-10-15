@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
-from ..models import TripParticipant, User
+from ..models import Trip, TripParticipant, User
 from ..schemas import ParticipantUpdate
 from ..security import get_current_user
 from ..services.access import lock_trip_active, require_trip_member
@@ -44,10 +44,11 @@ async def update_me(
     trip.input_version = (trip.input_version or 0) + 1
     await db.commit()
 
-    await manager.broadcast(trip_id, {"type": "participants_updated", "trip_id": trip_id})
+    await manager.broadcast(trip_id, {"type": "participants_updated", "trip_id": trip_id, "input_version": trip.input_version})
 
     return {
         "participant_id": participant.id,
+        "input_version": trip.input_version,
         "share_preferences": participant.share_preferences,
         "start_location": participant.start_location,
         "transport_mode": participant.transport_mode,
@@ -63,6 +64,7 @@ async def list_participants(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await require_trip_member(db, trip_id, user)
+    trip = await db.get(Trip, trip_id)
     result = await db.execute(
         select(TripParticipant).where(TripParticipant.trip_id == trip_id)
     )
@@ -84,4 +86,4 @@ async def list_participants(
                 "available_until": p.available_until,
             }
         )
-    return {"participants": participants}
+    return {"participants": participants, "input_version": trip.input_version}

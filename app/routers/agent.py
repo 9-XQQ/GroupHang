@@ -1,4 +1,5 @@
 """Phase 5：读取 Trip 上下文、生成受控草案并在确认后执行。"""
+from ..services.agent_trace import read_traces, traced_request, traced_stage
 from datetime import datetime, timedelta, timezone
 from copy import deepcopy
 
@@ -27,6 +28,24 @@ from ..schemas import DiscoveryRequest
 from ..services.place_discovery import scene_from_message
 
 router = APIRouter(prefix="/trips/{trip_id}/assistant", tags=["assistant"])
+
+
+@router.get("/traces")
+async def list_traces(trip_id: int, user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)) -> dict:
+    await require_trip_member(db, trip_id, user)
+    return {"storage": "process_local", "retention_seconds": 86400,
+            "traces": read_traces(user.id, trip_id)}
+
+
+@router.get("/traces/{trace_id}")
+async def get_trace(trip_id: int, trace_id: str, user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)) -> dict:
+    await require_trip_member(db, trip_id, user)
+    traces = read_traces(user.id, trip_id, trace_id)
+    if not traces:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return traces[0]
 
 
 def _now() -> datetime:
@@ -82,6 +101,7 @@ async def _compare_inputs(inputs: PlanningInput, input_version: int) -> dict:
     return {"saved": False, "input_version": input_version, "comparisons": comparisons}
 
 
+@traced_stage("context.load")
 async def _context(db: AsyncSession, trip: Trip, user: User) -> dict:
     participant_rows = list((await db.execute(
         select(TripParticipant, User)
@@ -173,6 +193,7 @@ async def _context(db: AsyncSession, trip: Trip, user: User) -> dict:
 
 
 @router.post("/chat")
+@traced_request("chat")
 async def chat(
     trip_id: int, body: AgentChatRequest,
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
@@ -275,6 +296,7 @@ def _project_actions(inputs: PlanningInput, actions: list[AgentAction]) -> int:
     return bumps
 
 
+@traced_stage("execution.prepare")
 async def _prepare_execution(
     trip_id: int, user: User, db: AsyncSession, inputs: PlanningInput,
     actions: list[AgentAction], version: int,
@@ -297,6 +319,7 @@ async def _prepare_execution(
     return place_import, comparison, route
 
 
+@traced_stage("execution.commit")
 async def _commit_execution(
     db: AsyncSession, trip_id: int, user_id: int, proposal_id: str, token: str,
     version: int, inputs: PlanningInput, actions: list[AgentAction],
@@ -384,6 +407,7 @@ async def _commit_execution(
 
 
 @router.post("/proposals/execute")
+@traced_request("execute")
 async def execute_proposal(
     trip_id: int, body: AgentProposalExecuteRequest,
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),

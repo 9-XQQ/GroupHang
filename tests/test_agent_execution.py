@@ -185,6 +185,15 @@ class AgentExecutionDatabaseTests(unittest.IsolatedAsyncioTestCase):
             replay = await self.execute(pid)
         self.assertTrue(replay["replayed"])
         self.assertEqual(first["itinerary"]["plan_id"], replay["itinerary"]["plan_id"])
+        from app.services.agent_trace import read_traces
+        self.assertNotEqual(first["trace_id"], replay["trace_id"])
+        initial_trace = read_traces(self.user.id, self.trip.id, first["trace_id"])[0]
+        replay_trace = read_traces(self.user.id, self.trip.id, replay["trace_id"])[0]
+        self.assertEqual(initial_trace["proposal_id"], pid)
+        self.assertEqual([s["stage"] for s in initial_trace["spans"]],
+                         ["execution.prepare", "execution.commit"])
+        self.assertTrue(replay_trace["replayed"])
+        self.assertEqual(replay_trace["spans"], [])
         async with self.sessions() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(ItineraryPlan)), 1)
             trip = await db.get(Trip, self.trip.id)
@@ -192,6 +201,7 @@ class AgentExecutionDatabaseTests(unittest.IsolatedAsyncioTestCase):
             rows = (await db.scalars(select(TripDestination).order_by(TripDestination.id))).all()
             self.assertEqual([d.expected_stay_min for d in rows], [30, 40])
             proposal = await db.get(AgentProposal, pid)
+            self.assertNotIn("trace_id", proposal.result)
             self.assertEqual(proposal.actions, [])
             self.assertEqual(proposal.status, "consumed")
 
@@ -407,9 +417,15 @@ class AgentExecutionDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row.actions, [])
                 self.assertEqual(row.status, "expired")
                 self.assertIn("lease_token", {c["name"] for c in inspect(conn).get_columns("agent_proposals")})
+                self.assertIn("account_recovery_codes", inspect(conn).get_table_names())
+                self.assertEqual(conn.scalar(text("SELECT count(*) FROM account_recovery_codes")), 0)
+                conn.execute(text("INSERT INTO account_recovery_codes (user_id, code_hash) VALUES (1, :digest)"), {"digest": "a" * 64})
                 command.downgrade(config, "0009_agent_state")
+                self.assertNotIn("account_recovery_codes", inspect(conn).get_table_names())
                 command.upgrade(config, "head")
-                self.assertEqual(conn.scalar(text("SELECT version_num FROM alembic_version")), "0014_trip_return")
+                self.assertEqual(conn.scalar(text("SELECT version_num FROM alembic_version")), "0015_recovery_code")
+                self.assertEqual(conn.scalar(text("SELECT count(*) FROM account_recovery_codes")), 0)
+                self.assertEqual(conn.scalar(text("SELECT count(*) FROM users WHERE id=1")), 1)
             await connection.run_sync(migrate)
 
     async def test_http_execute_replay_confirm_reopen_and_clear(self):
@@ -434,6 +450,15 @@ class AgentExecutionDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(first.status_code, 200, first.text)
                     replay = await client.post(path + "/assistant/proposals/execute", json={"proposal_id": pid})
                 self.assertTrue(replay.json()["replayed"])
+                trace_path = path + "/assistant/traces/" + first.json()["trace_id"]
+                observed = await client.get(trace_path)
+                self.assertEqual(observed.status_code, 200, observed.text)
+                self.assertEqual(observed.json()["proposal_id"], pid)
+                async def other_user():
+                    return self.other
+                app.dependency_overrides[get_current_user] = other_user
+                self.assertEqual((await client.get(trace_path)).status_code, 404)
+                app.dependency_overrides[get_current_user] = current_user
                 plan_id = first.json()["itinerary"]["plan_id"]
                 confirmed = await client.post(path + f"/itinerary-plans/{plan_id}/confirm", json={})
                 self.assertEqual(confirmed.status_code, 200, confirmed.text)

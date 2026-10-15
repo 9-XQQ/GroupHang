@@ -9,6 +9,7 @@ import asyncio
 import html
 import re
 import time
+from .agent_trace import traced_stage
 from collections import Counter
 from contextvars import ContextVar
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
@@ -71,6 +72,7 @@ class AmapClient:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
 
+    @traced_stage("map.request", outcome="nullable")
     async def _get(self, path: str, params: dict) -> dict | None:
         self.last_error = None
         if not self.available:

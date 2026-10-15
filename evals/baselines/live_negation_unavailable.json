@@ -1,0 +1,154 @@
+{
+  "report_version": 1,
+  "mode": "live",
+  "network_disabled": false,
+  "real_model_calls": 5,
+  "dataset_version": "1.0",
+  "dataset_sha256": "de888a6fbc6eb0ac2e39d216fcfb3903e0769059a8d2513afd4c1cbb67d3f812",
+  "dataset_cases": 31,
+  "selected_cases": 5,
+  "prompt_sha256": "d03408863ec62bc6b7a2199fb57941c489177056427c52decac7a3728be94ce2",
+  "agent_source_sha256": "218a06182f5cb0a53502a6ee62ae086e241d52d22305cf25895aef30e6cfa0db",
+  "git_revision": "dacbb8e97218f6a8f29194bbab6f93f56c7ac545",
+  "git_dirty": true,
+  "generated_at": "2026-10-15T02:11:22.005828+00:00",
+  "metrics": {
+    "cases": 5,
+    "passed": 0,
+    "failed": 5,
+    "task_pass_rate": 0,
+    "action_precision": null,
+    "action_recall": null,
+    "unexpected_actions": 0,
+    "exceptions": 0,
+    "fallback_cases": 5,
+    "p50_latency_ms": 20356.917,
+    "p95_latency_ms": 20453.168,
+    "usage_reported_cases": 0,
+    "tokens": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "cache_hit_tokens": 0
+    },
+    "categories": {
+      "negation": {
+        "cases": 5,
+        "passed": 0
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "clear_question",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "real_model_response": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 20453.168,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "clear_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "real_model_response": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 20370.613,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "generate_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "real_model_response": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 20356.917,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "switch_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "real_model_response": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 352.151,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "stay_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "real_model_response": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 20126.52,
+      "usage": null,
+      "error_type": null
+    }
+  ],
+  "model_identity_omitted_in_public_copy": true
+}

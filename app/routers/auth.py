@@ -1,17 +1,20 @@
 """Phone verification login and per-device session revocation."""
+import hashlib
+import hmac
+import secrets
 from datetime import datetime, timezone
 from ipaddress import ip_address
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_db
-from ..models import AuthSession, PasswordCredential, User
+from ..models import AccountRecoveryCode, AuthSession, PasswordCredential, User
 from ..schemas import (LoginRequest, SmsCodeRequest, PasswordRegisterRequest,
-                       PasswordLoginRequest, PasswordChangeRequest)
+                       PasswordLoginRequest, PasswordChangeRequest, RecoveryCodeCreateRequest, PasswordRecoverRequest)
 from ..services.password_auth import (DUMMY_HASH, hash_password, verify_password,
                                      password_work, reserve_auth_attempt)
 from ..security import (COOKIE_NAME, check_browser_origin, get_current_user, issue_token,
@@ -138,11 +141,69 @@ async def password_change(body: PasswordChangeRequest, request: Request, respons
     if current is None or current.password_hash != encoded:
         raise HTTPException(409, "密码已发生变化，请重新登录")
     current.password_hash = replacement
+    await db.execute(delete(AccountRecoveryCode).where(AccountRecoveryCode.user_id == user.id))
     await db.execute(update(AuthSession).where(AuthSession.user_id == user.id).values(
         revoked_at=datetime.now(timezone.utc)))
     return await complete_login(db, user, body.browser, request, response)
 
 
+
+
+@router.get("/recovery-code")
+async def recovery_code_status(response: Response, user: User = Depends(get_current_user),
+                               db: AsyncSession = Depends(get_db)) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return {"enabled": await db.get(AccountRecoveryCode, user.id) is not None}
+
+
+@router.post("/recovery-code")
+async def create_recovery_code(body: RecoveryCodeCreateRequest, request: Request, response: Response,
+                               user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
+    await reserve_auth_attempt(db, "recovery-create", str(user.id), client_ip(request))
+    credential = await db.get(PasswordCredential, user.id)
+    encoded = credential.password_hash if credential else DUMMY_HASH
+    valid = await password_work(verify_password, body.current_password, encoded)
+    if not valid or credential is None:
+        raise HTTPException(400, "当前密码错误")
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    current = await db.get(PasswordCredential, user.id, populate_existing=True)
+    if current is None or current.password_hash != encoded:
+        raise HTTPException(409, "密码已发生变化，请重新登录")
+    code = secrets.token_hex(24)  # 192 random bits; a fast digest is safe for a random secret.
+    await db.execute(delete(AccountRecoveryCode).where(AccountRecoveryCode.user_id == user.id))
+    db.add(AccountRecoveryCode(user_id=user.id, code_hash=hashlib.sha256(code.encode()).hexdigest()))
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    return {"recovery_code": "-".join(code[i:i+8] for i in range(0, len(code), 8))}
+
+
+@router.post("/password/recover")
+async def recover_password(body: PasswordRecoverRequest, request: Request, response: Response,
+                           db: AsyncSession = Depends(get_db)) -> dict:
+    check_browser_origin(request)
+    await reserve_auth_attempt(db, "recover", body.username, client_ip(request))
+    credential = (await db.execute(select(PasswordCredential).where(
+        PasswordCredential.username == body.username))).scalar_one_or_none()
+    candidate = hashlib.sha256(body.recovery_code.encode()).hexdigest()
+    recovery = await db.get(AccountRecoveryCode, credential.user_id if credential else -1)
+    valid = hmac.compare_digest(candidate, recovery.code_hash if recovery else "0" * 64)
+    if not valid or credential is None or recovery is None:
+        raise HTTPException(400, "用户名或恢复码无效，请核对后重试或联系管理员")
+    replacement = await password_work(hash_password, body.new_password)
+    await db.execute(select(User.id).where(User.id == credential.user_id).with_for_update())
+    current = await db.get(AccountRecoveryCode, credential.user_id, populate_existing=True)
+    if current is None or not hmac.compare_digest(candidate, current.code_hash):
+        raise HTTPException(400, "用户名或恢复码无效，请核对后重试或联系管理员")
+    locked_credential = await db.get(PasswordCredential, credential.user_id, populate_existing=True)
+    locked_credential.password_hash = replacement
+    await db.delete(current)
+    await db.execute(update(AuthSession).where(AuthSession.user_id == credential.user_id).values(
+        revoked_at=datetime.now(timezone.utc)))
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.delete_cookie(COOKIE_NAME, path="/", secure=settings.auth_cookie_secure,
+                           httponly=True, samesite="lax")
+    return {"recovered": True, "message": "密码已重置，请重新登录并生成新的恢复码"}
 
 
 @router.get("/me")

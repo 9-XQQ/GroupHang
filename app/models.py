@@ -289,3 +289,10 @@ class TripPlaceImport(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     source_key: Mapped[str] = mapped_column(String(64))
     destination_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trip_destinations.id", ondelete="CASCADE"))
+
+
+class AccountRecoveryCode(Base):
+    __tablename__ = "account_recovery_codes"
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())

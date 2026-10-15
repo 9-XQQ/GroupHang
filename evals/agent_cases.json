@@ -1,0 +1,457 @@
+{
+  "version": "1.0",
+  "description": "Public synthetic cases; assistant proposal evaluation only, never executes database writes.",
+  "default_context": {
+    "trip": {
+      "title": "公开合成演示行程",
+      "status": "active",
+      "primary_workflow": "itinerary",
+      "planned_start_at": "2026-11-01T13:00:00+08:00",
+      "planned_end_at": "2026-11-01T18:00:00+08:00",
+      "group_transport_mode": "transit",
+      "optimization_objective": "balanced",
+      "input_version": 1
+    },
+    "participants": [
+      {
+        "name": "演示甲",
+        "role": "creator",
+        "has_start_location": true
+      }
+    ],
+    "destinations": [
+      {
+        "id": 101,
+        "name": "演示博物馆",
+        "visit_status": "must_visit",
+        "expected_stay_min": 60
+      },
+      {
+        "id": 102,
+        "name": "演示公园",
+        "visit_status": "must_visit",
+        "expected_stay_min": 30
+      }
+    ],
+    "latest_plan": null,
+    "route_summary": {
+      "has_plan": false,
+      "estimated_segment_count": 0,
+      "total_wait_min": 0,
+      "time_window_conflict_count": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "route_generate",
+      "category": "planning",
+      "kind": "rules",
+      "message": "请生成当前路线",
+      "expected": {
+        "actions": [
+          {
+            "type": "generate_itinerary"
+          }
+        ]
+      }
+    },
+    {
+      "id": "route_compare",
+      "category": "planning",
+      "kind": "rules",
+      "message": "比较不同路线方案",
+      "expected": {
+        "actions": [
+          {
+            "type": "compare_itineraries"
+          }
+        ]
+      }
+    },
+    {
+      "id": "switch_meeting",
+      "category": "planning",
+      "kind": "rules",
+      "message": "切换主方案为共同约点",
+      "expected": {
+        "actions": [
+          {
+            "type": "switch_workflow",
+            "primary_workflow": "meeting"
+          }
+        ]
+      }
+    },
+    {
+      "id": "switch_itinerary",
+      "category": "planning",
+      "kind": "rules",
+      "message": "切换主方案为多地点路线",
+      "expected": {
+        "actions": [
+          {
+            "type": "switch_workflow",
+            "primary_workflow": "itinerary"
+          }
+        ]
+      }
+    },
+    {
+      "id": "settings_transit",
+      "category": "planning",
+      "kind": "rules",
+      "message": "设置2026-11-01 13:00到18:00，公交，总时间最短",
+      "expected": {
+        "actions": [
+          {
+            "type": "update_planning_settings",
+            "planned_start_at": "2026-11-01T13:00:00+08:00",
+            "planned_end_at": "2026-11-01T18:00:00+08:00",
+            "group_transport_mode": "transit",
+            "optimization_objective": "total_time"
+          }
+        ]
+      }
+    },
+    {
+      "id": "settings_driving",
+      "category": "planning",
+      "kind": "rules",
+      "message": "设置2026-11-01 09:00到17:00，自驾，距离最短",
+      "expected": {
+        "actions": [
+          {
+            "type": "update_planning_settings",
+            "group_transport_mode": "driving",
+            "optimization_objective": "distance"
+          }
+        ]
+      }
+    },
+    {
+      "id": "stay_update",
+      "category": "destination",
+      "kind": "rules",
+      "message": "把演示博物馆的停留时间改成45分钟",
+      "expected": {
+        "actions": [
+          {
+            "type": "update_destination",
+            "destination_id": 101,
+            "expected_stay_min": 45
+          }
+        ]
+      }
+    },
+    {
+      "id": "status_optional",
+      "category": "destination",
+      "kind": "rules",
+      "message": "把演示公园改成可选",
+      "expected": {
+        "actions": [
+          {
+            "type": "update_destination",
+            "destination_id": 102,
+            "visit_status": "optional"
+          }
+        ]
+      }
+    },
+    {
+      "id": "status_must",
+      "category": "destination",
+      "kind": "rules",
+      "message": "把演示公园改成必去",
+      "expected": {
+        "actions": [
+          {
+            "type": "update_destination",
+            "destination_id": 102,
+            "visit_status": "must_visit"
+          }
+        ]
+      }
+    },
+    {
+      "id": "window_clear",
+      "category": "destination",
+      "kind": "rules",
+      "message": "取消演示博物馆的固定时间窗",
+      "expected": {
+        "actions": [
+          {
+            "type": "update_destination",
+            "destination_id": 101,
+            "clear_visit_window": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "import_prepare",
+      "category": "planning",
+      "kind": "rules",
+      "message": "导入地点：演示博物馆和演示公园",
+      "expected": {
+        "actions": [
+          {
+            "type": "prepare_place_import"
+          }
+        ]
+      }
+    },
+    {
+      "id": "no_mutation_chat",
+      "category": "clarification",
+      "kind": "rules",
+      "message": "我们可以聊聊旅行偏好吗？",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "unknown_destination",
+      "category": "clarification",
+      "kind": "rules",
+      "message": "把不存在的星空馆停留时间改成30分钟",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "ambiguous_destination",
+      "category": "clarification",
+      "kind": "rules",
+      "message": "把演示博物馆和演示公园停留时间改成30分钟",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "stay_out_of_range",
+      "category": "validation",
+      "kind": "rules",
+      "message": "把演示博物馆停留时间改成999分钟",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "clear_question",
+      "category": "negation",
+      "kind": "rules",
+      "message": "怎么取消演示博物馆的固定时间窗？",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "clear_negative",
+      "category": "negation",
+      "kind": "rules",
+      "message": "不要取消演示博物馆的固定时间窗",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "generate_negative",
+      "category": "negation",
+      "kind": "rules",
+      "message": "不要生成路线",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "switch_negative",
+      "category": "negation",
+      "kind": "rules",
+      "message": "不要切换为共同约点",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "stay_negative",
+      "category": "negation",
+      "kind": "rules",
+      "message": "不要把演示公园停留时间改成20分钟",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "invalid_calendar",
+      "category": "validation",
+      "kind": "rules",
+      "message": "设置2026-02-30 13:00到18:00，公交",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "invalid_time_order",
+      "category": "validation",
+      "kind": "rules",
+      "message": "设置2026-11-01 18:00到13:00，公交",
+      "expected": {
+        "actions": []
+      }
+    },
+    {
+      "id": "ready_check",
+      "category": "readiness",
+      "kind": "rules",
+      "message": "当前可以规划了吗？",
+      "expected": {
+        "actions": [],
+        "ready_to_plan": true
+      }
+    },
+    {
+      "id": "missing_origins",
+      "category": "readiness",
+      "kind": "rules",
+      "message": "现在缺什么？",
+      "expected": {
+        "actions": [],
+        "ready_to_plan": false,
+        "missing_codes": [
+          "participant_origins_missing"
+        ]
+      },
+      "context_overrides": {
+        "participants": [
+          {
+            "name": "演示甲",
+            "role": "creator",
+            "has_start_location": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "locked_trip",
+      "category": "readiness",
+      "kind": "rules",
+      "message": "当前可以规划了吗？",
+      "expected": {
+        "actions": [],
+        "ready_to_plan": false,
+        "blocker_codes": [
+          "trip_not_active"
+        ]
+      },
+      "context_overrides": {
+        "trip": {
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "id": "estimated_explanation",
+      "category": "explanation",
+      "kind": "rules",
+      "message": "当前路线能直接用于导航吗？",
+      "expected": {
+        "actions": [],
+        "reply_contains": [
+          "不能作为导航"
+        ]
+      },
+      "context_overrides": {
+        "route_summary": {
+          "estimated_segment_count": 2
+        }
+      }
+    },
+    {
+      "id": "valid_model_output",
+      "category": "model_contract",
+      "kind": "contract",
+      "message": "比较不同路线方案",
+      "model_payload": {
+        "reply": "已准备比较草案",
+        "actions": [
+          {
+            "type": "compare_itineraries"
+          }
+        ]
+      },
+      "expected": {
+        "actions": [
+          {
+            "type": "compare_itineraries"
+          }
+        ],
+        "llm_used": true
+      }
+    },
+    {
+      "id": "unknown_tool",
+      "category": "model_contract",
+      "kind": "contract",
+      "message": "仅解释当前情况，不执行修改。",
+      "model_payload": {
+        "reply": "操作",
+        "actions": [
+          {
+            "type": "delete_database"
+          }
+        ]
+      },
+      "expected": {
+        "actions": [],
+        "llm_used": false
+      }
+    },
+    {
+      "id": "invalid_stay",
+      "category": "model_contract",
+      "kind": "contract",
+      "message": "仅解释当前情况，不执行修改。",
+      "model_payload": {
+        "reply": "操作",
+        "actions": [
+          {
+            "type": "update_destination",
+            "destination_id": 101,
+            "expected_stay_min": 999
+          }
+        ]
+      },
+      "expected": {
+        "actions": [],
+        "llm_used": false
+      }
+    },
+    {
+      "id": "extra_output_field",
+      "category": "model_contract",
+      "kind": "contract",
+      "message": "仅解释当前情况，不执行修改。",
+      "model_payload": {
+        "reply": "操作",
+        "actions": [],
+        "secret": "untrusted"
+      },
+      "expected": {
+        "actions": [],
+        "llm_used": false
+      }
+    },
+    {
+      "id": "provider_unavailable",
+      "category": "model_contract",
+      "kind": "contract",
+      "message": "仅解释当前情况，不执行修改。",
+      "model_payload": null,
+      "expected": {
+        "actions": [],
+        "llm_used": false
+      }
+    }
+  ]
+}

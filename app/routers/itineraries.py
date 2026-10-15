@@ -9,6 +9,7 @@ from ..schemas import ConfirmPlanRequest, PlanningSettingsUpdate
 from ..security import get_current_user
 from ..services.access import lock_trip, lock_trip_active, require_trip_member
 from ..services.itinerary import plan_itinerary
+from ..services.plan_review import compare_plans
 from ..services.planning_input import load_planning_input
 from ..services.ws import manager
 
@@ -120,6 +121,22 @@ async def get_latest_plan(
     if plan is None:
         raise HTTPException(status_code=404, detail="尚未生成路线方案")
     return _plan_dict(plan, trip)
+
+
+@router.get("/itinerary-plans/comparison")
+async def compare_latest_plans(
+    trip_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    await require_trip_member(db, trip_id, user)
+    trip = await db.get(Trip, trip_id)
+    plans = (await db.execute(select(ItineraryPlan).where(
+        ItineraryPlan.trip_id == trip_id,
+    ).order_by(ItineraryPlan.computed_at.desc(), ItineraryPlan.id.desc()).limit(2))).scalars().all()
+    if len(plans) < 2:
+        return {"available": False, "message": "生成第二版路线后，可与上一版比较"}
+    current, previous = (_plan_dict(plan, trip) for plan in plans)
+    return {"available": True, "current_is_stale": current["is_stale"],
+            "previous_is_stale": previous["is_stale"], "changes": compare_plans(previous, current)}
 
 
 @router.post("/itinerary-plans/{plan_id}/confirm")

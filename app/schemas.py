@@ -387,3 +387,25 @@ class DiscoveryRequest(BaseModel):
 
 
 AgentChatRequest.model_rebuild()
+
+
+class RecoveryCodeCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=128, repr=False)
+
+
+class PasswordRecoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-z0-9_]+$")
+    recovery_code: str = Field(min_length=48, max_length=48, pattern=r"^[a-f0-9]{48}$", repr=False)
+    new_password: str = Field(min_length=8, max_length=15, repr=False)
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("recovery_code", mode="before")
+    @classmethod
+    def normalize_recovery_code(cls, value):
+        return value.replace("-", "").replace(" ", "").strip().lower() if isinstance(value, str) else value

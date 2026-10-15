@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>U友与U · 绘本风格预览</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e3e5e9;
+    --text: #1f2329;
+    --muted: #8a919c;
+    --primary: #3370ff;
+    --green: #00b578;
+    --orange: #ff8800;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+  }
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  header .hint { color: var(--muted); font-size: 12px; }
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 16px;
+    padding: 16px;
+    min-height: calc(100vh - 60px);
+  }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    position: relative;
+    z-index: 2;
+  }
+  .panel h2 { font-size: 13px; margin: 0 0 2px; color: var(--muted); font-weight: 600; }
+  .row { display: flex; gap: 8px; min-width: 0; }
+  .row > input, .row > select { min-width: 0; }
+  #loginStep .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  #loginStep #name { grid-column: 1 / -1; width: 100% !important; }
+  input, select, button {
+    font: inherit;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, select:focus { outline: none; border-color: var(--primary); }
+  button {
+    cursor: pointer;
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  button.secondary { background: #fff; color: var(--text); border-color: var(--border); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 20px;
+    font-size: 12px;
+    background: #eef2ff;
+    color: var(--primary);
+  }
+  .tag.green { background: #e7f7f0; color: var(--green); }
+  .tag.orange { background: #fff3e6; color: var(--orange); }
+  #map { height: 100%; min-height: 420px; border-radius: 10px; border: 1px solid var(--border); background: #eef1f5; }
+  canvas#fallback { width: 100%; height: 100%; min-height: 420px; display: block; }
+  #mapWrap { position: relative; z-index: 1; height: 100%; min-height: 420px; min-width: 0; overflow: hidden; border-radius: 10px; }
+  .map-tip {
+    position: fixed; top: 58px; right: 20px; width: min(420px, calc(100vw - 40px));
+    background: #fff9e6; color: #8a6d00; border: 1px solid #f0e3b0;
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; display: none; z-index: 1000;
+    box-shadow: 0 6px 20px rgba(31, 35, 41, 0.16); pointer-events: none;
+  }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: #fafbfc; color: var(--muted); font-weight: 600; }
+  .cand-block { margin-bottom: 14px; }
+  .cand-title { font-weight: 600; margin-bottom: 4px; }
+  .vote-bar { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+  .vote-btn { background: #fff; color: var(--text); border-color: var(--border); padding: 5px 10px; }
+  .vote-btn.active-up { color: var(--green); border-color: var(--green); background: #e7f7f0; }
+  .vote-btn.active-down { color: #d4380d; border-color: #d4380d; background: #fff0f0; }
+  .destination-card { border: 1px solid var(--border); border-radius: 8px; padding: 9px; margin-top: 7px; }
+  .destination-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .destination-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+  .destination-actions button, .destination-actions select { padding: 4px 8px; font-size: 12px; }
+  .inline-editor { margin-top: 8px; padding: 9px; border-radius: 8px; background: #fafbfc; border: 1px solid var(--border); }
+  .inline-editor .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .inline-editor label { color: var(--muted); font-size: 12px; }
+  .inline-editor input, .inline-editor select, .inline-editor textarea { width: 100%; box-sizing: border-box; margin-top: 3px; }
+  .inline-editor .tag-options { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 6px; }
+  .inline-editor .tag-options label { color: var(--text); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .log { color: var(--muted); font-size: 12px; min-height: 16px; }
+  .err { color: #d4380d; font-size: 12px; }
+  details { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: #fafbfc; }
+  summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+  .cfg { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+  .cfg label { font-size: 12px; color: var(--muted); }
+  .location-tools { border: 1px solid var(--border); border-radius: 8px; padding: 9px; background: #fafbfc; }
+  .location-tools .row { margin-top: 6px; }
+  .flow-hidden { display: none !important; }
+  .workflow-choice button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  #loginStep { order: 1; } #tripStep { order: 2; } .workflow-choice { order: 3; }
+  .location-tools { order: 4; } #startStep { order: 5; } #participantStep { order: 6; }
+  #meetingWorkflow { order: 7; } #destinationWorkflow { order: 7; }
+  #routeWorkflow { order: 8; } #importWorkflow { order: 9; }
+  #accountDialog::backdrop { background: rgba(0,0,0,.35); }
+  #accountDialog input[type="password"] { display:block;width:100%;box-sizing:border-box;margin:8px 0; }
+  .nav-hidden {display:none !important;}
+  #featureNav {order:-10;display:flex;flex-wrap:wrap;gap:6px;position:sticky;top:0;background:white;z-index:3;padding:5px 0;}
+  #featureNav button {font-size:12px;padding:6px;}
+  #featureNav .nav-active {background:var(--primary);color:white;}
+  #savedPlacesStep input,#savedPlacesStep textarea,#discoveryOptions input {max-width:100%;}
+  #discoveryOptions {margin-bottom:10px;}
+</style>
+<link rel="stylesheet" href="/assets/journal-v1.css?v=20261014-review2">
+<style>.preview-banner{height:36px;background:#f1e5cf;text-align:center;font-size:11px;color:#77634c;line-height:36px}.preview-banner a{color:#9c523b}.journal-shell{height:calc(100vh - 112px)}.sample-pin{position:absolute;width:34px;height:34px;min-height:34px;border-radius:50%;padding:0;background:#947ca7;border:3px solid #fff9ee;box-shadow:0 4px 8px #6d534a22;font-size:12px}.map-sticker{position:absolute;top:14px;left:14px;padding:7px 12px;border-radius:9px;background:#fffdf5ed;font-size:12px;box-shadow:0 3px 10px #7969511a}.map-sticker span{font-size:10px;color:#8b775c}.sample-timeline{padding-left:16px}.sample-timeline>div{position:relative;border-left:1px dashed #d9c8ad;padding:0 0 18px 20px}.sample-timeline>div::before{content:"";position:absolute;width:9px;height:9px;border-radius:50%;left:-5px;top:6px;background:#bc9470;border:2px solid #fffaf0}.sample-timeline small{display:block;font-size:10px;color:#a08b70}.sample-timeline b{font-size:13px}.sample-timeline p{font-size:12px;color:#8b775c;margin:3px 0}.illustrated-map{position:relative;overflow:hidden}@media(max-width:860px){.preview-banner{height:auto;line-height:1.6;padding:8px}.journal-shell{height:auto}}</style></head><body class="is-authenticated"><header class="journal-header">
+  <a class="brand" href="/" aria-label="U友与U 首页">
+    <svg class="brand-stamp" viewBox="0 0 48 44" aria-hidden="true"><path d="M3 35q20-10 42 0" fill="none" stroke="#a7bc75" stroke-width="10"/><g fill="#4a3e35"><circle cx="15" cy="11" r="4"/><circle cx="32" cy="11" r="4"/></g><g fill="none" stroke="#5a6b48" stroke-width="4" stroke-linecap="round"><path d="M9 20v6q5 12 11 0v-6M26 20v6q5 12 11 0v-6"/><path d="m20 22 3 3 4-3" stroke-width="2"/></g><g fill="#d88c72"><circle cx="12" cy="12" r="1"/><circle cx="29" cy="12" r="1"/></g></svg>
+    <span class="brand-copy"><b>U友与U</b><small>一起，把日子过成旅行</small></span>
+  </a>
+  <span class="header-divider"></span><span class="header-caption">一份关于相遇与出发的旅行手账</span>
+  <span style="margin-left:auto;font-size:12px;color:#8b775c">绘本工作台 · 第一版</span></header>
+<div class="preview-banner">风格预览 · 所有地点、人数和路线均为界面示例，不连接账户或地图服务。 <a href="/">打开真实应用 →</a></div>
+<div class="journal-shell" id="previewShell">
+<aside class="journal-sidebar"><nav id="featureNav" aria-label="功能导航">
+  <div class="kite-section" style="--kite:#e6a18a">
+    <div class="kite-heading"><span class="kite-icon" aria-hidden="true">✦</span> 行程与收藏</div>
+    <div class="kite-children"><button data-feature="trips" onclick="selectFeature('trips')">我的行程</button><button data-feature="saved" onclick="selectFeature('saved')">收藏地点</button></div>
+  </div>
+  <div class="kite-section" style="--kite:#e4c47b">
+    <div class="kite-heading"><span class="kite-icon" aria-hidden="true">⌁</span> 结伴出行</div>
+    <div class="kite-children"><button data-feature="meeting" onclick="selectFeature('meeting')">共同约点</button><button data-feature="route" onclick="selectFeature('route')">路线规划</button></div>
+  </div>
+  <div class="kite-section" style="--kite:#c2afd9">
+    <div class="kite-heading"><span class="kite-icon" aria-hidden="true">✧</span> 助手与灵感</div>
+    <div class="kite-children"><button data-feature="assistant" onclick="selectFeature('assistant')">行程助手</button><button data-feature="import" onclick="selectFeature('import')">灵感导入</button></div>
+  </div>
+</nav></aside>
+<main class="journal-main"><div class="workspace-heading"><div><div class="eyebrow" id="previewEyebrow">A DAY WELL SPENT</div><h1 id="previewTitle">路线规划</h1><p id="previewDescription">把想去的地方，串成一段好时光。</p></div><div class="workspace-meta"><span>样例手账</span><span>规划中</span></div><button class="mobile-map-switch secondary" onclick="togglePreviewMap()">地图 / 手账</button></div>
+<div class="layout workspace-grid" id="previewGrid" data-feature="route">
+<div class="panel" id="sidePanel">
+<div class="notebook-heading"><span>TRAVEL NOTES</span><b>今天，想去哪里？</b></div>
+<div id="previewSteps" class="step-tabs"><button onclick="previewStep(0)" class="active">① 时间与出发</button><button onclick="previewStep(1)">② 选择地点</button><button onclick="previewStep(2)">③ 查看路线</button></div>
+<section data-preview="route">
+<div data-route-step="0"><h2>留一个下午给风景</h2><p class="muted">先决定什么时候出发，其他的，慢慢安排。</p>
+<label>出发日期</label><input type="date" value="2026-10-24" style="width:100%;margin:6px 0 14px">
+<div class="row"><label style="flex:1">开始时间<input type="time" value="13:00" style="width:100%;margin-top:6px"></label><label style="flex:1">结束时间<input type="time" value="18:00" style="width:100%;margin-top:6px"></label></div>
+<h2 style="margin-top:25px">同行的小伙伴</h2><div class="destination-card"><div class="destination-title"><span style="background:#e3ebd6;border-radius:50%;width:34px;height:34px;display:grid;place-items:center">A</span> 小伙伴 A <span class="tag green">已填起点</span></div><div class="muted" style="margin-top:9px">公交 / 地铁 · 13:00 可出发</div></div><div class="destination-card"><div class="destination-title"><span style="background:#f2dfcb;border-radius:50%;width:34px;height:34px;display:grid;place-items:center">B</span> 小伙伴 B <span class="tag green">已填起点</span></div><div class="muted" style="margin-top:9px">公交 / 地铁 · 12:45 可出发</div></div>
+<details style="margin-top:18px"><summary>更多安排：交通方式与共同返程</summary><p class="muted">样例：共同公交，结束后返回公园南门。</p></details></div>
+<div data-route-step="1" hidden><h2>这一路，想去的地方</h2><div class="row"><button class="secondary" onclick="selectFeature('saved')">从收藏加入</button><button class="secondary" onclick="selectFeature('import')">导入灵感</button></div>
+<article class="destination-card"><div class="destination-title">湖畔公园 <span class="tag green">必去</span></div><p class="muted">慢慢走走，看看湖面和树影。</p><div class="row"><label>停留 <input type="number" value="60" min="5" max="720" style="width:72px"> 分钟</label><button class="secondary" onclick="this.textContent=this.textContent==='已收藏'?'收藏':'已收藏'">收藏</button></div></article>
+<article class="destination-card"><div class="destination-title">街角美术馆 <span class="tag green">必去</span></div><p class="muted">给喜欢的作品多留一点时间。</p><span class="tag">停留 45 分钟</span></article>
+<article class="destination-card"><div class="destination-title">小巷咖啡 <span class="tag orange">可选</span></div><p class="muted">走累了，就坐下来聊聊天。</p><span class="tag">停留 40 分钟</span></article></div>
+<div data-route-step="2" hidden><h2>这一程，安排好了</h2><p class="muted">示例路线在右侧展开。正式应用会根据所有当前输入重新计算。</p><div class="destination-card"><span class="tag green">3 个地点</span> <span class="tag">约 4 小时</span><p>各自出发，湖畔集合，走到美术馆，再坐下来喝杯咖啡。</p></div><details><summary>需要留意的地方</summary><p class="muted">此页为设计示例，时间和路线不能用于导航。</p></details></div>
+</section>
+<section data-preview="trips" hidden><div class="trips-intro"><h2>把相聚，写进手账里。</h2><p>不用急着决定去哪儿，先约上想一起出发的人。</p><div class="trip-quick-actions"><button onclick="previewNotice('正式应用中这里打开创建行程弹窗')">＋ 创建行程</button><button class="secondary" onclick="previewNotice('正式应用中这里输入朋友的邀请码')">用邀请码加入</button></div></div><div class="trip-library-grid"><article class="destination-card"><span class="tag green">规划中 · 示例</span><h3 class="trip-card-title">周末，一起去湖边</h3><p class="trip-card-meta">2 位同行 · 公交出行</p><button class="secondary" onclick="selectFeature('route')">打开这段旅程 →</button></article><article class="destination-card"><span class="tag orange">示例</span><h3 class="trip-card-title">留给美术馆的一下午</h3><p class="trip-card-meta">给喜欢的地方多一点时间</p><button class="secondary" onclick="selectFeature('route')">看看安排 →</button></article></div></section>
+<section data-preview="saved" hidden><h2>把想去的地方，先放进口袋</h2><p class="muted">标签、备注与回忆仅自己可见。以下内容均为设计示例。</p><div class="row"><input placeholder="搜索收藏地点" style="flex:1"><button onclick="previewNotice('示例页面没有连接收藏数据')">搜索</button></div><div class="row" style="margin:18px 0"><button class="secondary" onclick="previewNotice('示例：按公园标签筛选')">公园</button><button class="secondary" onclick="previewNotice('示例：按艺术标签筛选')">艺术</button><button class="secondary" onclick="previewNotice('示例：按咖啡标签筛选')">咖啡</button></div><div class="trip-library-grid"><article class="destination-card"><div style="height:110px;background:#e9efdc;border-radius:10px;display:grid;place-items:center;font-size:38px">♧</div><h3 class="trip-card-title">湖畔公园</h3><span class="tag green">公园</span><span class="tag">想再去</span><p>样例备注：秋天的树影很好看，下次带朋友一起来。</p><button class="secondary" onclick="selectFeature('route');previewStep(1)">加入样例路线</button></article><article class="destination-card"><div style="height:110px;background:#ede6f1;border-radius:10px;display:grid;place-items:center;font-size:38px">▧</div><h3 class="trip-card-title">街角美术馆</h3><span class="tag">艺术</span><p>样例备注：想找一个安静的下午，慢慢看展。</p><button class="secondary" onclick="selectFeature('route');previewStep(1)">加入样例路线</button></article></div></section>
+<section data-preview="meeting" hidden><h2>找到一个刚刚好的地方</h2><p class="muted">比较每个人的赴约时间，也看看附近能做什么。</p><div class="scene-choices"><button onclick="previewNotice('示例：进入多人餐厅推荐')">不知道去哪吃<small>让大家都少赶一点路。</small></button><button onclick="previewNotice('示例：进入品牌分店比较')">已经选好品牌<small>找一家方便见面，也方便继续逛的店。</small></button></div><article class="destination-card"><div class="destination-title">商场里的餐厅 <span class="tag green">示例推荐 1</span></div><p>小伙伴 A 约 20 分钟 · B 约 25 分钟</p><p class="muted">交通时间比较接近；周边还有公园，可以饭后散步。</p><button class="secondary" onclick="previewNotice('正式应用中确认后才加入行程')">选择这个地方</button></article></section>
+<section data-preview="assistant" hidden><h2>说说你的想法吧</h2><div class="scene-choices"><button onclick="previewConversation('meal')">一起吃点什么？<small>不知道去哪吃，找一个大家都方便的地方。</small></button><button onclick="previewConversation('brand')">喜欢的店，选哪一家？<small>比较分店，顺便看看周边。</small></button><button onclick="previewConversation('afternoon')">留一个下午给风景。<small>从收藏与附近地点，安排一段小旅行。</small></button></div><textarea id="previewMessage" rows="3" placeholder="说说你想怎么度过这段时光…" style="width:100%"></textarea><div class="row" style="margin-top:8px"><button onclick="previewConversation('afternoon')">看看回复样例</button></div><div id="previewReply" class="destination-card" hidden></div></section>
+<section data-preview="import" hidden><h2>把灵感，放进旅行里</h2><p class="muted">粘贴分享中的地点文字，再确认位置后加入行程。</p><textarea rows="8" placeholder="粘贴地点分享、地址或旅行灵感…" style="width:100%"></textarea><button style="margin-top:15px" onclick="previewNotice('此处仅展示导入界面，未调用解析服务')">解析地点</button></section>
+<div id="previewActions" class="journal-actions"><button class="secondary" onclick="previewStep(Math.max(0,previewRouteStep-1))">上一步</button><button class="primary" id="previewNext" onclick="previewStep(Math.min(2,previewRouteStep+1))">下一步：选择地点 →</button></div>
+</div>
+<div class="map-column"><div class="map-toolbar"><b>这一程的地图</b><span>布局示意 · 非真实地图</span></div><div id="mapWrap" class="illustrated-map">
+<svg viewBox="0 0 700 420" preserveAspectRatio="xMidYMid slice" aria-label="样例地点布局，不用于导航" role="img" style="width:100%;height:100%;position:absolute;inset:0"><rect width="700" height="420" fill="#f2f0e5"/><path d="M460-30C410 80 510 150 455 230S435 350 590 460" fill="none" stroke="#c5dce1" stroke-width="80"/><path d="M-40 90Q120 145 190 90T430 115T750 100M-40 300Q150 240 300 305T740 280M130-20Q180 150 100 440M340-20Q280 150 340 440M620-20Q570 160 650 450" fill="none" stroke="#fffdf7" stroke-width="22"/><path d="M-40 90Q120 145 190 90T430 115T750 100M-40 300Q150 240 300 305T740 280M130-20Q180 150 100 440M340-20Q280 150 340 440M620-20Q570 160 650 450" fill="none" stroke="#e4d8c5" stroke-width="1.5"/><path d="M185 165Q245 130 290 170L280 245Q200 275 160 235Z" fill="#d8e4c8"/><path d="M500 315Q540 285 600 325L610 395H490Z" fill="#e1e8d3"/><path d="M120 125Q180 190 225 205T355 190T540 285" fill="none" stroke="#92749f" stroke-width="4" stroke-dasharray="9 7"/><g fill="#c6d5b5"><circle cx="195" cy="195" r="15"/><circle cx="233" cy="220" r="18"/><circle cx="260" cy="187" r="12"/></g><g font-size="12" fill="#9b957e" font-family="sans-serif"><text x="480" y="160" transform="rotate(50 480 160)">湖畔 · 示意</text><text x="45" y="350">地图区域示例，非真实地理位置</text></g></svg>
+<button class="sample-pin" style="left:17%;top:27%;background:#6b8a58" onclick="previewNotice('样例：成员出发点')">A</button><button class="sample-pin" style="left:31%;top:46%" onclick="previewStep(1)">1</button><button class="sample-pin" style="left:50%;top:41%" onclick="previewStep(1)">2</button><button class="sample-pin" style="left:76%;top:65%" onclick="previewStep(2)">3</button>
+<div class="map-sticker">周末，一起去湖边 <span>· 示例行程</span></div></div><div class="map-caption"><span>● 同行起点</span><span>● 游览地点</span><span>虚线为示意连接，不代表导航路线</span></div>
+<div class="journal-results"><div class="panel" id="itineraryPanel"><h2>这一程的时间轴 <span class="tag">示例</span></h2><div class="sample-timeline"><div><small>13:00</small><b>各自出发</b><p>A 与 B 从不同起点前往湖畔公园。</p></div><div><small>13:30 — 14:30</small><b>湖畔公园 · 全员集合</b><p>走走停停，看一会儿湖面。</p></div><div><small>14:50 — 15:35</small><b>街角美术馆</b><p>留一点时间给喜欢的作品。</p></div><div><small>16:00 — 16:40</small><b>小巷咖啡</b><p>给这段旅程一个慢悠悠的结尾。</p></div></div></div></div></div>
+</div></main></div><div id="previewNotice" class="map-tip" role="status"></div>
+<script>
+let previewRouteStep=0;
+const pageNames={trips:['我的行程','下一段好时光，从这里开始。'],saved:['收藏地点','把想去的地方，先放进口袋。'],meeting:['共同约点','找到一个，对大家都刚刚好的地方。'],route:['路线规划','把想去的地方，串成一段好时光。'],assistant:['行程助手','说说你的想法，我们一起安排。'],import:['灵感导入','把一段分享，变成下一站的灵感。']};
+function selectFeature(feature){
+ document.querySelectorAll('[data-preview]').forEach(el=>el.hidden=el.dataset.preview!==feature);
+ document.querySelectorAll('[data-feature]').forEach(button=>button.classList.toggle('nav-active',button.dataset.feature===feature));
+ document.getElementById('previewGrid').dataset.feature=feature;
+ document.getElementById('previewGrid').classList.remove('mobile-map-visible');
+ document.getElementById('previewTitle').textContent=pageNames[feature][0];
+ document.getElementById('previewDescription').textContent=pageNames[feature][1];
+ document.querySelector('.mobile-map-switch').hidden=['trips','saved'].includes(feature);
+ document.getElementById('previewSteps').hidden=feature!=='route';document.getElementById('previewActions').hidden=feature!=='route';
+ document.getElementById('sidePanel').scrollTop=0;
+}
+function previewStep(step){
+ previewRouteStep=step;selectFeature('route');
+ document.querySelectorAll('[data-route-step]').forEach(el=>el.hidden=Number(el.dataset.routeStep)!==step);
+ document.querySelectorAll('#previewSteps button').forEach((el,i)=>el.classList.toggle('active',i===step));
+ document.getElementById('previewNext').textContent=step===0?'下一步：选择地点 →':step===1?'下一步：查看路线 →':'确认最终方案（示例）';
+ if(step===2)document.getElementById('itineraryPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function togglePreviewMap(){document.getElementById('previewGrid').classList.toggle('mobile-map-visible');}
+function previewNotice(message){const el=document.getElementById('previewNotice');el.textContent=message;el.style.display='block';setTimeout(()=>el.style.display='none',2800);}
+function previewConversation(scene){
+ const message={meal:'我们约着吃饭，不知道去哪，推荐几家餐厅。',brand:'想吃寿司郎，哪家分店对大家都方便？',afternoon:'想在附近游玩一下午，安排一条轻松的路线。'}[scene];
+ document.getElementById('previewMessage').value=message;
+ const reply=document.getElementById('previewReply');reply.hidden=false;reply.innerHTML='<span class="tag">回复样例 · 未调用模型</span><p>我们可以先从大家的起点与可用时间出发，再看看收藏和附近地点。确认城市、时段和出行方式后，我会给出候选及逐人的交通时间。</p>';
+}
+previewStep(0);
+</script></body></html>

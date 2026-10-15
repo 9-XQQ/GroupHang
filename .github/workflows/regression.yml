@@ -67,5 +67,21 @@ jobs:
         run: python scripts/check_frontend.py
       - name: Unit, PostgreSQL, crash recovery and HTTP E2E
         run: python -m unittest discover -s tests -q
+      - name: Offline agent behavior evaluation
+        run: python scripts/evaluate_agent.py --output-dir docs_private/agent_evals/ci
+      - name: Synthetic discovery task evaluation
+        run: python scripts/evaluate_discovery.py --output-dir docs_private/discovery_evals/ci
+      - name: Agent evaluation summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          reports = [Path("docs_private/agent_evals/ci/report.md"), Path("docs_private/discovery_evals/ci/report.md")]
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+              for report in reports:
+                  summary.write(report.read_text(encoding="utf-8") if report.exists() else f"Missing evaluation report: {report.name}\n")
+                  summary.write("\n")
+          PY
       - name: Patch whitespace
         run: git diff --check

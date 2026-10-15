@@ -1,0 +1,703 @@
+{
+  "report_version": 1,
+  "split": "frozen_challenge_v1",
+  "dataset_sha256": "97c5e78ddde2612eefe9166d79668262b7de667e3afaf6d834f418bc99f3f7eb",
+  "generated_at": "2026-10-15T04:52:49.130860+00:00",
+  "network_disabled": true,
+  "real_model_calls": 0,
+  "real_map_calls": 0,
+  "database": "isolated_random_schema",
+  "source_sha256": {
+    "scripts/evaluate_discovery.py": "287c3d6afc7562863dbb60dd76ae959b6e58e41be78c8e3ef695b05902808a05",
+    "app/services/place_discovery.py": "e7596102e0ca72cc3ee86316a5adfd37648fd9b84f674e565bbf4b7f631bdd77",
+    "app/services/itinerary.py": "183f122ed65f19fce457a8af4c65438cbd71b10df26d99f52e948fd459e76acc",
+    "app/routers/discovery.py": "0c16b0452e60662e9f0b43a72b3a24903ab0097cb525a7082d3dd2fd83aba2a2",
+    "app/routers/agent.py": "fe0b9d92a92a519d246c13b6a2946a129e2efd406d1636a2b184c17818d3741e"
+  },
+  "metrics": {
+    "episodes": 12,
+    "passed_episodes": 12,
+    "turns": 24,
+    "passed_turns": 24,
+    "exceptions": 0,
+    "p50_latency_ms": 3.309,
+    "p95_latency_ms": 8.512,
+    "scenarios": {
+      "meal": {
+        "episodes": 4,
+        "passed": 4
+      },
+      "brand": {
+        "episodes": 4,
+        "passed": 4
+      },
+      "afternoon": {
+        "episodes": 4,
+        "passed": 4
+      }
+    }
+  },
+  "episodes": [
+    {
+      "id": "meal_origin_repair",
+      "scenario": "meal",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "needs_contains": true,
+            "max_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 40.717,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 0,
+            "route": 0,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "top": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 8.512,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 3,
+            "route": 4,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "meal_fairness_preferences",
+      "scenario": "meal",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "top": true,
+            "min_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 4.281,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 3,
+            "route": 4,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "top": true,
+            "min_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.676,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 3,
+            "route": 4,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "meal_saved_tags",
+      "scenario": "meal",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "names": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 5.095,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 2,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "names": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.841,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 2,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "meal_tightened_deadline",
+      "scenario": "meal",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.519,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 3,
+            "route": 4,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "max_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.781,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 4,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_missing_name",
+      "scenario": "brand",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "needs_contains": true,
+            "max_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 2.954,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 0,
+            "route": 0,
+            "model": 1
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "brand_only": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.204,
+          "fixture_calls": {
+            "search": 1,
+            "nearby": 2,
+            "route": 4,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_city_repair",
+      "scenario": "brand",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "needs_contains": true,
+            "max_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.957,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 0,
+            "route": 0,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "brand_only": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.064,
+          "fixture_calls": {
+            "search": 1,
+            "nearby": 2,
+            "route": 4,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_preference_toggle",
+      "scenario": "brand",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "top": true,
+            "reason_contains": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.309,
+          "fixture_calls": {
+            "search": 1,
+            "nearby": 2,
+            "route": 4,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "top": true,
+            "reason_absent": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.111,
+          "fixture_calls": {
+            "search": 1,
+            "nearby": 2,
+            "route": 4,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_search_recovery",
+      "scenario": "brand",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "names": true,
+            "warning_contains": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.666,
+          "fixture_calls": {
+            "search": 1,
+            "nearby": 1,
+            "route": 2,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "brand_only": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.278,
+          "fixture_calls": {
+            "search": 1,
+            "nearby": 3,
+            "route": 6,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_time_repair",
+      "scenario": "afternoon",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "needs_contains": true,
+            "max_recommendations": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 2.565,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 0,
+            "route": 0,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "finish_within": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.034,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 5,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_anchor_disambiguation",
+      "scenario": "afternoon",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "needs_contains": true,
+            "max_recommendations": true,
+            "anchor_choices": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 2.651,
+          "fixture_calls": {
+            "search": 1,
+            "nearby": 0,
+            "route": 0,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "finish_within": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.12,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 5,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_budget_revision",
+      "scenario": "afternoon",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "finish_within": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.549,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 5,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "max_recommendations": true,
+            "finish_within": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.309,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 4,
+            "model": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_route_failure_return",
+      "scenario": "afternoon",
+      "passed": true,
+      "turns": [
+        {
+          "turn": 1,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "estimated": true,
+            "return_leg": true,
+            "finish_within": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.343,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 7,
+            "model": 0
+          }
+        },
+        {
+          "turn": 2,
+          "passed": true,
+          "checks": {
+            "no_private_note": true,
+            "preview_only": true,
+            "recommendation_bound": true,
+            "needs_excludes_recommendations": true,
+            "min_recommendations": true,
+            "estimated": true,
+            "return_leg": true,
+            "finish_within": true,
+            "no_write_trip_destinations": true,
+            "no_write_agent_proposals": true,
+            "no_write_itinerary_plans": true,
+            "version_unchanged": true
+          },
+          "error_type": null,
+          "latency_ms": 3.066,
+          "fixture_calls": {
+            "search": 0,
+            "nearby": 1,
+            "route": 7,
+            "model": 0
+          }
+        }
+      ]
+    }
+  ]
+}

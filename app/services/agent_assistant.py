@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from .agent_trace import traced_stage
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -82,6 +83,22 @@ def normalize_actions(actions: list[AgentAction]) -> list[AgentAction]:
     return sorted([*singletons.values(), *edits], key=lambda action: order[action.type])
 
 
+def _filter_requested_actions(message: str, actions: list[AgentAction]) -> list[AgentAction]:
+    """Conservative intent guard shared by model and rule proposals; execution still revalidates."""
+    if re.search(r"(?:不要|无需|不需要|别).{0,4}(?:修改|执行|操作)|怎么|如何|是否需要", message):
+        return []
+    denial = r"(?:不要|不需要|无需|别|暂不)"
+    rules = {
+        "generate_itinerary": denial + r".{0,8}(?:生成|保存|规划|开始).{0,8}(?:路线|行程|方案)",
+        "switch_workflow": denial + r".{0,8}切换",
+        "update_destination": denial + r".{0,35}(?:停留|固定时间窗|到访时间|改成|设为|取消|清除)",
+        "update_planning_settings": denial + r".{0,12}(?:设置|调整|修改).{0,20}(?:时间|时段|交通|目标)",
+        "prepare_place_import": denial + r".{0,8}(?:导入|添加|解析)",
+        "compare_itineraries": denial + r".{0,8}(?:比较|对比)",
+    }
+    return [action for action in actions if not re.search(rules[action.type], message)]
+
+
 class AgentModelAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -124,6 +141,14 @@ class AgentAssistant:
             "用户要求比较、对比不同路线方案时使用 compare_itineraries；该操作只模拟，不保存正式路线。"
             "优先依据 planning_readiness 和 route_summary 回答能否规划、等待、迟到、固定时间窗冲突及路线是否为估算；"
             "不得把 estimated=false 的真实路线说成直线估算，也不得忽略 missing 列表。"
+            "动作字段和枚举必须严格遵守以下JSON Schema，禁止自行改名或增加字段。"
+            "switch_workflow必须带primary_workflow，值只能为meeting或itinerary；"
+            "update_planning_settings必须同时带含时区的planned_start_at与planned_end_at，"
+            "若只修改交通方式或优化目标，沿用上下文中已经存在的起止时间，不得猜测缺失时间。"
+            "每个action仅输出本次相关字段，generate_itinerary和compare_itineraries只需type。"
+            "否定、解释和追问不产生修改草案；不声称操作已经执行。\n"
+            "OUTPUT_JSON_SCHEMA:\n"
+            + json.dumps(AgentModelAnswer.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
         )
 
     @staticmethod
@@ -166,6 +191,7 @@ class AgentAssistant:
             "confirmed_destination_count": len(confirmed),
         }
 
+    @traced_stage("assistant.decide", outcome="assistant")
     async def chat(
         self, context: dict, message: str, trip_id: int | None = None, user_id: int | None = None,
     ) -> tuple[AgentModelAnswer, bool, str | None]:
@@ -182,9 +208,7 @@ class AgentAssistant:
                 inferred = self.infer_actions(message, context)
                 existing_types = {action.type for action in answer.actions}
                 answer.actions.extend(action for action in inferred if action.type not in existing_types)
-                if re.search(r"(?:不要|无需|不需要|别).{0,4}(?:生成|保存).{0,4}(?:正式)?(?:路线|方案)", message):
-                    answer.actions = [action for action in answer.actions if action.type != "generate_itinerary"]
-                answer.actions = answer.actions[:4]
+                answer.actions = _filter_requested_actions(message, answer.actions)[:4]
                 if trip_id is not None and user_id is not None:
                     self.remember(trip_id, user_id, message, answer.reply, answer.actions)
                 return answer, True, None
@@ -214,20 +238,23 @@ class AgentAssistant:
         date_match = re.search(r"(20\d{2})[年/-](\d{1,2})[月/-](\d{1,2})日?", message)
         times = re.findall(r"(?<!\d)([01]?\d|2[0-3])[:：]([0-5]\d)(?!\d)", message)
         if explicit_change and date_match and len(times) >= 2:
-            year, month, day = (int(value) for value in date_match.groups())
-            start = datetime(year, month, day, int(times[0][0]), int(times[0][1]), tzinfo=timezone(timedelta(hours=8)))
-            end = datetime(year, month, day, int(times[1][0]), int(times[1][1]), tzinfo=timezone(timedelta(hours=8)))
-            trip = context["trip"]
-            mode = "driving" if "自驾" in message else "transit" if re.search(r"公交|地铁|公共交通", message) else trip.get("group_transport_mode", "transit")
-            objective = (
-                "distance" if re.search(r"距离.*(?:短|优先)|最短距离", message)
-                else "total_time" if re.search(r"时间.*(?:短|优先)|最快|总时间", message)
-                else "balanced" if "均衡" in message else trip.get("optimization_objective", "balanced")
-            )
-            actions.append(AgentAction(
-                type="update_planning_settings", planned_start_at=start, planned_end_at=end,
-                group_transport_mode=mode, optimization_objective=objective,
-            ))
+            try:
+                year, month, day = (int(value) for value in date_match.groups())
+                start = datetime(year, month, day, int(times[0][0]), int(times[0][1]), tzinfo=timezone(timedelta(hours=8)))
+                end = datetime(year, month, day, int(times[1][0]), int(times[1][1]), tzinfo=timezone(timedelta(hours=8)))
+                trip = context["trip"]
+                mode = "driving" if "自驾" in message else "transit" if re.search(r"公交|地铁|公共交通", message) else trip.get("group_transport_mode", "transit")
+                objective = (
+                    "distance" if re.search(r"距离.*(?:短|优先)|最短距离", message)
+                    else "total_time" if re.search(r"时间.*(?:短|优先)|最快|总时间", message)
+                    else "balanced" if "均衡" in message else trip.get("optimization_objective", "balanced")
+                )
+                actions.append(AgentAction(
+                    type="update_planning_settings", planned_start_at=start, planned_end_at=end,
+                    group_transport_mode=mode, optimization_objective=objective,
+                ))
+            except (ValueError, ValidationError):
+                return []  # Invalid explicit dates/times require correction, never a partial draft.
         # 仅在消息明确写出唯一地点名称和修改词时生成地点草案，避免“第一家”等指代误改。
         matched_destinations = [
             item for item in context.get("destinations", [])
@@ -256,11 +283,11 @@ class AgentAssistant:
                 ))
         if re.search(r"(?:解析|导入|添加).{0,8}(?:地点|餐厅|景点|店)", message):
             actions.append(AgentAction(type="prepare_place_import", import_text=message[:4000]))
-        if re.search(r"(?:生成路线|规划路线|开始规划|生成行程)", message):
+        if re.search(r"(?:生成|规划)(?:当前|这次|本次|正式)?(?:路线|行程)|开始规划", message):
             actions.append(AgentAction(type="generate_itinerary"))
         if re.search(r"(?:比较|对比)[^。！？\n]{0,40}(?:路线|方案)|(?:路线|方案)[^。！？\n]{0,40}(?:比较|对比)", message):
             actions.append(AgentAction(type="compare_itineraries"))
-        return actions[:4]
+        return _filter_requested_actions(message, actions)[:4]
 
     def sync_history_epoch(self, trip_id: int, user_id: int, epoch: str) -> None:
         key = (trip_id, user_id)

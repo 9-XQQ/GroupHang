@@ -1,6 +1,7 @@
 """Read-only discovery tools used by Agent chat and scenario controls."""
 import asyncio
 
+from ..services.agent_trace import traced_stage
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from ..services.place_discovery import discover
 router = APIRouter(tags=["assistant-discovery"])
 
 
+@traced_stage("discovery.recommend")
 async def run_discovery(trip_id, body, user, db):
     await require_trip_member(db, trip_id, user)
     trip = await db.get(Trip, trip_id)

@@ -50,9 +50,11 @@ async def cleanup_agent_data(db: AsyncSession) -> None:
 
 async def sweep_agent_data() -> None:
     from .agent_assistant import agent_assistant
+    from .agent_trace import _prune
 
     while True:
         agent_assistant.cleanup()
+        _prune()
         try:
             async with SessionLocal() as db:
                 await cleanup_agent_data(db)

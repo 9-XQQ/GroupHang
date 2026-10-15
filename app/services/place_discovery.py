@@ -179,6 +179,7 @@ async def discover(db, trip, user, body):
         if not online:
             response["warnings"].append("在线地点搜索无结果或不可用；只使用符合条件的收藏，不虚构地点")
     unique = {}
+    coordinate_matches = {}
     excluded = []
     for place in candidates:
         try:
@@ -189,9 +190,17 @@ async def discover(db, trip, user, body):
         if distance(center, place) > request.radius_km:
             excluded.append({"name": place["name"], "reason": "超过本次中心半径"})
             continue
-        key = place.get("poi_id") or (place["name"], round(place["lat"], 5), round(place["lng"], 5))
+        coordinate_key = (place["name"].strip().casefold(), round(place["lat"], 5), round(place["lng"], 5))
+        poi_id = place.get("poi_id")
+        prior = coordinate_matches.get(coordinate_key)
+        # Manually saved places have no provider ID. Match their exact name
+        # and rounded coordinates too, while keeping distinct provider IDs.
+        if prior is not None and (not poi_id or not prior.get("poi_id")):
+            continue
+        key = poi_id or coordinate_key
         if key not in unique:
             unique[key] = place
+            coordinate_matches.setdefault(coordinate_key, place)
     candidates = sorted(unique.values(), key=lambda p: max(distance(person, p) for person in people))[:MAX_CANDIDATES]
     response.update({"candidate_count": len(candidates), "candidate_limit": MAX_CANDIDATES,
                      "center": {"lat": center["lat"], "lng": center["lng"]},

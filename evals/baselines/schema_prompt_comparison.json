@@ -1,0 +1,305 @@
+{
+  "comparison_version": 1,
+  "dataset_sha256": "de888a6fbc6eb0ac2e39d216fcfb3903e0769059a8d2513afd4c1cbb67d3f812",
+  "case_ids": [
+    "route_generate",
+    "route_compare",
+    "switch_meeting",
+    "switch_itinerary",
+    "settings_transit"
+  ],
+  "synthetic": true,
+  "model_identity_omitted": true,
+  "limits": [
+    "Five known synthetic cases, sequential before/after; not held out, no statistical causal claim.",
+    "Measures model plus intent guard and rule completion, not raw model alone.",
+    "Only assistant proposals; no real map calls or business execution.",
+    "Before usage capture was invalid because ContextVar was read outside wait_for task; no token/cost comparison.",
+    "All live failures retained; latest settings_transit includes an unrequested generate_itinerary proposal."
+  ],
+  "before": {
+    "generated_at": "2026-10-15T07:00:06.015535+00:00",
+    "prompt_sha256": "d03408863ec62bc6b7a2199fb57941c489177056427c52decac7a3728be94ce2",
+    "agent_source_sha256": "c8ca8dad64c8a5493af4e300689112dc37bb8869244dbd467eab3e9d02a2a0a6",
+    "usage_capture_valid": false,
+    "passed": 2,
+    "cases": [
+      {
+        "id": "route_generate",
+        "passed": true,
+        "llm_used": true,
+        "provider_error": null,
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": true
+        },
+        "predicted_action_types": [
+          "generate_itinerary"
+        ],
+        "latency_ms": 1796.941
+      },
+      {
+        "id": "route_compare",
+        "passed": true,
+        "llm_used": true,
+        "provider_error": null,
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": true
+        },
+        "predicted_action_types": [
+          "compare_itineraries"
+        ],
+        "latency_ms": 1870.914
+      },
+      {
+        "id": "switch_meeting",
+        "passed": false,
+        "llm_used": false,
+        "provider_error": "schema_rejected",
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": false
+        },
+        "predicted_action_types": [
+          "switch_workflow"
+        ],
+        "latency_ms": 3427.633
+      },
+      {
+        "id": "switch_itinerary",
+        "passed": false,
+        "llm_used": false,
+        "provider_error": "schema_rejected",
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": false
+        },
+        "predicted_action_types": [
+          "switch_workflow"
+        ],
+        "latency_ms": 2276.338
+      },
+      {
+        "id": "settings_transit",
+        "passed": false,
+        "llm_used": false,
+        "provider_error": "schema_rejected",
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": false
+        },
+        "predicted_action_types": [
+          "update_planning_settings"
+        ],
+        "latency_ms": 3653.675
+      }
+    ]
+  },
+  "after": {
+    "generated_at": "2026-10-15T07:12:42.077362+00:00",
+    "prompt_sha256": "ead8032b5f995d6d4739aee4382920e1551cd8327e4b47905b73c78678fff194",
+    "agent_source_sha256": "70f408788e49ed841f95d0d4116b7af4d2a9b556b8f18e7921661d29b4288b22",
+    "evaluator_source_sha256": "669369e20840f130d0f07ccf512a0337658091240111c9ed0e2fb644cabbe0ee",
+    "usage_capture_valid": true,
+    "metrics": {
+      "cases": 5,
+      "passed": 4,
+      "failed": 1,
+      "task_pass_rate": 0.8,
+      "action_precision": 0.8333,
+      "action_recall": 1,
+      "unexpected_actions": 0,
+      "exceptions": 0,
+      "fallback_cases": 0,
+      "p50_latency_ms": 2195.255,
+      "p95_latency_ms": 5881.849,
+      "usage_reported_cases": 5,
+      "tokens": {
+        "input_tokens": 7128,
+        "output_tokens": 1774,
+        "total_tokens": 8902,
+        "cache_hit_tokens": 5376
+      },
+      "categories": {
+        "planning": {
+          "cases": 5,
+          "passed": 4
+        }
+      }
+    },
+    "cases": [
+      {
+        "id": "route_generate",
+        "category": "planning",
+        "kind": "rules",
+        "passed": true,
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": true
+        },
+        "action_score": {
+          "matched": 1,
+          "expected": 1,
+          "predicted": 1,
+          "exact": true
+        },
+        "predicted_action_types": [
+          "generate_itinerary"
+        ],
+        "llm_used": true,
+        "latency_ms": 1469.538,
+        "usage": {
+          "input_tokens": 1421,
+          "output_tokens": 140,
+          "total_tokens": 1561,
+          "cache_hit_tokens": 256,
+          "cache_miss_tokens": 1165,
+          "cache_creation_tokens": 0,
+          "cache_hit_rate": 0.1802
+        },
+        "error_type": null,
+        "provider_error": null
+      },
+      {
+        "id": "route_compare",
+        "category": "planning",
+        "kind": "rules",
+        "passed": true,
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": true
+        },
+        "action_score": {
+          "matched": 1,
+          "expected": 1,
+          "predicted": 1,
+          "exact": true
+        },
+        "predicted_action_types": [
+          "compare_itineraries"
+        ],
+        "llm_used": true,
+        "latency_ms": 2287.678,
+        "usage": {
+          "input_tokens": 1421,
+          "output_tokens": 267,
+          "total_tokens": 1688,
+          "cache_hit_tokens": 1280,
+          "cache_miss_tokens": 141,
+          "cache_creation_tokens": 0,
+          "cache_hit_rate": 0.9008
+        },
+        "error_type": null,
+        "provider_error": null
+      },
+      {
+        "id": "switch_meeting",
+        "category": "planning",
+        "kind": "rules",
+        "passed": true,
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": true
+        },
+        "action_score": {
+          "matched": 1,
+          "expected": 1,
+          "predicted": 1,
+          "exact": true
+        },
+        "predicted_action_types": [
+          "switch_workflow"
+        ],
+        "llm_used": true,
+        "latency_ms": 1299.142,
+        "usage": {
+          "input_tokens": 1424,
+          "output_tokens": 115,
+          "total_tokens": 1539,
+          "cache_hit_tokens": 1280,
+          "cache_miss_tokens": 144,
+          "cache_creation_tokens": 0,
+          "cache_hit_rate": 0.8989
+        },
+        "error_type": null,
+        "provider_error": null
+      },
+      {
+        "id": "switch_itinerary",
+        "category": "planning",
+        "kind": "rules",
+        "passed": true,
+        "checks": {
+          "no_exception": true,
+          "actions_exact": true,
+          "real_model_response": true
+        },
+        "action_score": {
+          "matched": 1,
+          "expected": 1,
+          "predicted": 1,
+          "exact": true
+        },
+        "predicted_action_types": [
+          "switch_workflow"
+        ],
+        "llm_used": true,
+        "latency_ms": 2195.255,
+        "usage": {
+          "input_tokens": 1424,
+          "output_tokens": 294,
+          "total_tokens": 1718,
+          "cache_hit_tokens": 1280,
+          "cache_miss_tokens": 144,
+          "cache_creation_tokens": 0,
+          "cache_hit_rate": 0.8989
+        },
+        "error_type": null,
+        "provider_error": null
+      },
+      {
+        "id": "settings_transit",
+        "category": "planning",
+        "kind": "rules",
+        "passed": false,
+        "checks": {
+          "no_exception": true,
+          "actions_exact": false,
+          "real_model_response": true
+        },
+        "action_score": {
+          "matched": 1,
+          "expected": 1,
+          "predicted": 2,
+          "exact": false
+        },
+        "predicted_action_types": [
+          "update_planning_settings",
+          "generate_itinerary"
+        ],
+        "llm_used": true,
+        "latency_ms": 5881.849,
+        "usage": {
+          "input_tokens": 1438,
+          "output_tokens": 958,
+          "total_tokens": 2396,
+          "cache_hit_tokens": 1280,
+          "cache_miss_tokens": 158,
+          "cache_creation_tokens": 0,
+          "cache_hit_rate": 0.8901
+        },
+        "error_type": null,
+        "provider_error": null
+      }
+    ]
+  }
+}

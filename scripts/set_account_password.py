@@ -11,11 +11,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.models import AuthSession, PasswordCredential, User
+from app.models import AccountRecoveryCode, AuthSession, PasswordCredential, User
 from app.schemas import PasswordRegisterRequest
 from app.services.password_auth import hash_password
 
@@ -34,6 +34,7 @@ async def set_account_password(db, user_id: int, username: str, encoded: str) ->
         current.password_hash = encoded
     else:
         db.add(PasswordCredential(user_id=user_id, username=username, password_hash=encoded))
+    await db.execute(delete(AccountRecoveryCode).where(AccountRecoveryCode.user_id == user_id))
     await db.execute(update(AuthSession).where(AuthSession.user_id == user_id).values(
         revoked_at=datetime.now(timezone.utc)))
     await db.flush()

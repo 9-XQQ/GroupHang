@@ -111,6 +111,34 @@ class SavedDiscoveryDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(response.status_code, (200, 201), response.text)
         return response.json()
 
+    async def test_participant_and_planning_versions_allow_immediate_saved_import(self):
+        place = await self.save()
+        response = await self.client.put(self.base + "/participants/me", json={
+            "start_location": {"lat":31.2,"lng":121.4}, "transport_mode":"transit"})
+        self.assertEqual(response.status_code, 200, response.text)
+        version = response.json()["input_version"]
+        listed = await self.client.get(self.base + "/participants")
+        self.assertEqual(listed.json()["input_version"], version)
+        settings = (await self.client.get(self.base + "/planning-settings")).json()
+        settings.pop("input_version")
+        saved = await self.client.put(self.base + "/planning-settings", json=settings)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertGreater(saved.json()["input_version"], version)
+        imported = await self.client.post(self.base + "/places/import", json={
+            "expected_version":saved.json()["input_version"],
+            "places":[{"saved_place_id":place["id"],"revision":place["revision"]}]})
+        self.assertEqual(imported.status_code, 200, imported.text)
+
+    async def test_manual_saved_place_and_online_poi_are_not_repeated(self):
+        place = await self.save(name="公园一", lat=31.22, lng=121.42, tags=["公园"])
+        response = await self.client.post(self.base + "/assistant/discover", json={
+            "scenario":"afternoon", "city":"上海市", "anchor":{"lat":31.22,"lng":121.42},
+            "start_at":"2026-11-01T02:00:00Z", "end_at":"2026-11-01T10:00:00Z"})
+        self.assertEqual(response.status_code, 200, response.text)
+        matches = [item for item in response.json()["recommendations"] if item["place"]["name"] == "公园一"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["selection"]["saved_place_id"], place["id"])
+
     async def test_private_crud_tags_revision_and_duplicate_save_preserve_memory(self):
         place = await self.save()
         duplicate = await self.save(private_note="overwrite attempt")

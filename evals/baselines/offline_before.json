@@ -1,0 +1,760 @@
+{
+  "report_version": 1,
+  "mode": "offline",
+  "dataset_version": "1.0",
+  "dataset_sha256": "de888a6fbc6eb0ac2e39d216fcfb3903e0769059a8d2513afd4c1cbb67d3f812",
+  "dataset_cases": 31,
+  "selected_cases": 31,
+  "prompt_sha256": "d03408863ec62bc6b7a2199fb57941c489177056427c52decac7a3728be94ce2",
+  "agent_source_sha256": "147eb6e17c2ed6dd91d90fcf7ed52d65e2ad50f47312e10d751565874494f275",
+  "git_revision": "dacbb8e97218f6a8f29194bbab6f93f56c7ac545",
+  "git_dirty": true,
+  "generated_at": "2026-10-15T02:00:54.328429+00:00",
+  "model": null,
+  "metrics": {
+    "cases": 31,
+    "passed": 25,
+    "failed": 6,
+    "task_pass_rate": 0.8065,
+    "action_precision": 0.7857,
+    "action_recall": 0.9167,
+    "unexpected_actions": 3,
+    "exceptions": 2,
+    "fallback_cases": 30,
+    "p50_latency_ms": 0.829,
+    "p95_latency_ms": 1.178,
+    "usage_reported_cases": 0,
+    "tokens": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "cache_hit_tokens": 0
+    },
+    "categories": {
+      "planning": {
+        "cases": 7,
+        "passed": 6
+      },
+      "destination": {
+        "cases": 4,
+        "passed": 4
+      },
+      "clarification": {
+        "cases": 3,
+        "passed": 3
+      },
+      "validation": {
+        "cases": 3,
+        "passed": 1
+      },
+      "negation": {
+        "cases": 5,
+        "passed": 2
+      },
+      "readiness": {
+        "cases": 3,
+        "passed": 3
+      },
+      "explanation": {
+        "cases": 1,
+        "passed": 1
+      },
+      "model_contract": {
+        "cases": 5,
+        "passed": 5
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "route_generate",
+      "category": "planning",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 1,
+        "predicted": 0,
+        "exact": false
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 2.691,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "route_compare",
+      "category": "planning",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "compare_itineraries"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.928,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "switch_meeting",
+      "category": "planning",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "switch_workflow"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.834,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "switch_itinerary",
+      "category": "planning",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "switch_workflow"
+      ],
+      "llm_used": false,
+      "latency_ms": 1.042,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "settings_transit",
+      "category": "planning",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "update_planning_settings"
+      ],
+      "llm_used": false,
+      "latency_ms": 1.057,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "settings_driving",
+      "category": "planning",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "update_planning_settings"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.815,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "stay_update",
+      "category": "destination",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "update_destination"
+      ],
+      "llm_used": false,
+      "latency_ms": 1.108,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "status_optional",
+      "category": "destination",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "update_destination"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.784,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "status_must",
+      "category": "destination",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "update_destination"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.771,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "window_clear",
+      "category": "destination",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "update_destination"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.864,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "import_prepare",
+      "category": "planning",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "prepare_place_import"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.746,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "no_mutation_chat",
+      "category": "clarification",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.741,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "unknown_destination",
+      "category": "clarification",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.835,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "ambiguous_destination",
+      "category": "clarification",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.738,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "stay_out_of_range",
+      "category": "validation",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.745,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "clear_question",
+      "category": "negation",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.844,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "clear_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.713,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "generate_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 1,
+        "exact": false
+      },
+      "predicted_action_types": [
+        "generate_itinerary"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.738,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "switch_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 1,
+        "exact": false
+      },
+      "predicted_action_types": [
+        "switch_workflow"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.858,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "stay_negative",
+      "category": "negation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": false
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 1,
+        "exact": false
+      },
+      "predicted_action_types": [
+        "update_destination"
+      ],
+      "llm_used": false,
+      "latency_ms": 0.755,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "invalid_calendar",
+      "category": "validation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": false,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.867,
+      "usage": null,
+      "error_type": "ValueError"
+    },
+    {
+      "id": "invalid_time_order",
+      "category": "validation",
+      "kind": "rules",
+      "passed": false,
+      "checks": {
+        "no_exception": false,
+        "actions_exact": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 1.178,
+      "usage": null,
+      "error_type": "ValidationError"
+    },
+    {
+      "id": "ready_check",
+      "category": "readiness",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "readiness": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.741,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "missing_origins",
+      "category": "readiness",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "readiness": true,
+        "missing_codes": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.732,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "locked_trip",
+      "category": "readiness",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "readiness": true,
+        "blocker_codes": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.843,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "estimated_explanation",
+      "category": "explanation",
+      "kind": "rules",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "reply_terms": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.725,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "valid_model_output",
+      "category": "model_contract",
+      "kind": "contract",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "provider_contract": true
+      },
+      "action_score": {
+        "matched": 1,
+        "expected": 1,
+        "predicted": 1,
+        "exact": true
+      },
+      "predicted_action_types": [
+        "compare_itineraries"
+      ],
+      "llm_used": true,
+      "latency_ms": 1,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "unknown_tool",
+      "category": "model_contract",
+      "kind": "contract",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "provider_contract": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.87,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "invalid_stay",
+      "category": "model_contract",
+      "kind": "contract",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "provider_contract": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.75,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "extra_output_field",
+      "category": "model_contract",
+      "kind": "contract",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "provider_contract": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.746,
+      "usage": null,
+      "error_type": null
+    },
+    {
+      "id": "provider_unavailable",
+      "category": "model_contract",
+      "kind": "contract",
+      "passed": true,
+      "checks": {
+        "no_exception": true,
+        "actions_exact": true,
+        "provider_contract": true
+      },
+      "action_score": {
+        "matched": 0,
+        "expected": 0,
+        "predicted": 0,
+        "exact": true
+      },
+      "predicted_action_types": [],
+      "llm_used": false,
+      "latency_ms": 0.829,
+      "usage": null,
+      "error_type": null
+    }
+  ]
+}

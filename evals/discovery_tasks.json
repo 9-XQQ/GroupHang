@@ -1,0 +1,369 @@
+{
+  "version": 1,
+  "split": "frozen_challenge_v1",
+  "synthetic": true,
+  "episodes": [
+    {
+      "id": "meal_origin_repair",
+      "scenario": "meal",
+      "initial": {
+        "missing_origin": true
+      },
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00"
+      },
+      "turns": [
+        {
+          "expected": {
+            "needs_contains": "出发点",
+            "max_recommendations": 0
+          }
+        },
+        {
+          "state": {
+            "restore_origin": true
+          },
+          "expected": {
+            "min_recommendations": 1,
+            "top": "中点餐厅"
+          }
+        }
+      ]
+    },
+    {
+      "id": "meal_fairness_preferences",
+      "scenario": "meal",
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00"
+      },
+      "turns": [
+        {
+          "expected": {
+            "top": "中点餐厅",
+            "min_recommendations": 2
+          }
+        },
+        {
+          "request": {
+            "include_preferences": false
+          },
+          "expected": {
+            "top": "中点餐厅",
+            "min_recommendations": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "meal_saved_tags",
+      "scenario": "meal",
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00",
+        "saved_only": true,
+        "tags": [
+          "周末"
+        ]
+      },
+      "turns": [
+        {
+          "expected": {
+            "names": [
+              "周末餐厅"
+            ]
+          }
+        },
+        {
+          "request": {
+            "tags": [
+              "雨天"
+            ]
+          },
+          "expected": {
+            "names": [
+              "雨天餐厅"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "meal_tightened_deadline",
+      "scenario": "meal",
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00"
+      },
+      "turns": [
+        {
+          "expected": {
+            "min_recommendations": 1
+          }
+        },
+        {
+          "request": {
+            "end_at": "2026-11-08T06:00:00Z"
+          },
+          "expected": {
+            "max_recommendations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_missing_name",
+      "scenario": "brand",
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00"
+      },
+      "turns": [
+        {
+          "expected": {
+            "needs_contains": "品牌",
+            "max_recommendations": 0
+          }
+        },
+        {
+          "request": {
+            "brand": "示例寿司"
+          },
+          "expected": {
+            "min_recommendations": 2,
+            "brand_only": "示例寿司"
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_city_repair",
+      "scenario": "brand",
+      "request": {
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00",
+        "brand": "示例寿司"
+      },
+      "turns": [
+        {
+          "expected": {
+            "needs_contains": "城市",
+            "max_recommendations": 0
+          }
+        },
+        {
+          "request": {
+            "city": "合成市"
+          },
+          "expected": {
+            "min_recommendations": 2,
+            "brand_only": "示例寿司"
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_preference_toggle",
+      "scenario": "brand",
+      "initial": {
+        "preferences": true
+      },
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00",
+        "brand": "示例寿司"
+      },
+      "turns": [
+        {
+          "expected": {
+            "top": "示例寿司公园店",
+            "reason_contains": "偏好"
+          }
+        },
+        {
+          "request": {
+            "include_preferences": false
+          },
+          "expected": {
+            "top": "示例寿司中点店",
+            "reason_absent": "本次启用的偏好“"
+          }
+        }
+      ]
+    },
+    {
+      "id": "brand_search_recovery",
+      "scenario": "brand",
+      "initial": {
+        "saved_brand": true
+      },
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00",
+        "brand": "示例寿司"
+      },
+      "turns": [
+        {
+          "tools": {
+            "search_outage": true
+          },
+          "expected": {
+            "names": [
+              "示例寿司收藏店"
+            ],
+            "warning_contains": "在线地点搜索无结果或不可用"
+          }
+        },
+        {
+          "tools": {
+            "search_outage": false
+          },
+          "expected": {
+            "min_recommendations": 2,
+            "brand_only": "示例寿司"
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_time_repair",
+      "scenario": "afternoon",
+      "initial": {
+        "missing_time": true
+      },
+      "request": {
+        "city": "合成市",
+        "anchor": {
+          "lat": 31.2,
+          "lng": 121.42
+        }
+      },
+      "turns": [
+        {
+          "expected": {
+            "needs_contains": "时间",
+            "max_recommendations": 0
+          }
+        },
+        {
+          "request": {
+            "start_at": "2026-11-08T05:00:00+00:00",
+            "end_at": "2026-11-08T09:00:00+00:00"
+          },
+          "expected": {
+            "min_recommendations": 1,
+            "finish_within": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_anchor_disambiguation",
+      "scenario": "afternoon",
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00",
+        "anchor_name": "同名公园"
+      },
+      "turns": [
+        {
+          "expected": {
+            "needs_contains": "唯一定位",
+            "max_recommendations": 0,
+            "anchor_choices": 2
+          }
+        },
+        {
+          "request": {
+            "anchor": {
+              "lat": 31.2,
+              "lng": 121.42
+            },
+            "anchor_name": ""
+          },
+          "expected": {
+            "min_recommendations": 1,
+            "finish_within": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_budget_revision",
+      "scenario": "afternoon",
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00",
+        "anchor": {
+          "lat": 31.2,
+          "lng": 121.42
+        }
+      },
+      "turns": [
+        {
+          "expected": {
+            "min_recommendations": 2,
+            "finish_within": true
+          }
+        },
+        {
+          "request": {
+            "end_at": "2026-11-08T05:40:00Z"
+          },
+          "expected": {
+            "max_recommendations": 0,
+            "finish_within": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "afternoon_route_failure_return",
+      "scenario": "afternoon",
+      "request": {
+        "city": "合成市",
+        "start_at": "2026-11-08T05:00:00+00:00",
+        "end_at": "2026-11-08T09:00:00+00:00",
+        "anchor": {
+          "lat": 31.2,
+          "lng": 121.42
+        },
+        "return_to_anchor": true
+      },
+      "turns": [
+        {
+          "tools": {
+            "route_outage": true
+          },
+          "expected": {
+            "min_recommendations": 1,
+            "estimated": true,
+            "return_leg": true,
+            "finish_within": true
+          }
+        },
+        {
+          "tools": {
+            "route_outage": false
+          },
+          "expected": {
+            "min_recommendations": 1,
+            "estimated": false,
+            "return_leg": true,
+            "finish_within": true
+          }
+        }
+      ]
+    }
+  ]
+}

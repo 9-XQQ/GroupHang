@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>出行规划 Agent · Phase 1</title>
+<title>U友与U · 结伴旅行手账</title>
 <style>
   :root {
     --bg: #f5f6f8;
@@ -139,12 +139,18 @@
   #savedPlacesStep input,#savedPlacesStep textarea,#discoveryOptions input {max-width:100%;}
   #discoveryOptions {margin-bottom:10px;}
 </style>
+<link rel="stylesheet" href="/assets/journal-v1.css?v=20261014-review2">
 </head>
 <body>
-<header>
-  <h1>📍 出行规划 Agent · v0.2（多人多地点规划）</h1>
+<header class="journal-header">
+  <a class="brand" href="/" aria-label="U友与U 首页">
+    <svg class="brand-stamp" viewBox="0 0 48 44" aria-hidden="true"><path d="M3 35q20-10 42 0" fill="none" stroke="#a7bc75" stroke-width="10"/><g fill="#4a3e35"><circle cx="15" cy="11" r="4"/><circle cx="32" cy="11" r="4"/></g><g fill="none" stroke="#5a6b48" stroke-width="4" stroke-linecap="round"><path d="M9 20v6q5 12 11 0v-6M26 20v6q5 12 11 0v-6"/><path d="m20 22 3 3 4-3" stroke-width="2"/></g><g fill="#d88c72"><circle cx="12" cy="12" r="1"/><circle cx="29" cy="12" r="1"/></g></svg>
+    <span class="brand-copy"><b>U友与U</b><small>一起，把日子过成旅行</small></span>
+  </a>
+  <span class="header-divider"></span><span class="header-caption">一份关于相遇与出发的旅行手账</span>
+  <button id="journalTripPill" class="requires-auth flow-hidden secondary" onclick="selectFeature('trips')">选择一段旅程</button>
+  <button id="guestLoginButton" class="secondary" onclick="openWelcomeLogin()">登录 / 注册</button>
   <button class="secondary" id="userInfo" onclick="openAccount()" aria-haspopup="dialog" disabled>未登录</button>
-  <button id="logoutButton" class="secondary" style="display:none;padding:4px 8px" onclick="doLogout()">退出登录</button>
 </header>
 
 <dialog id="accountDialog" aria-labelledby="accountTitle" style="width:min(520px,90vw);max-height:85vh;overflow:auto;border:1px solid #ddd;border-radius:12px;padding:20px">
@@ -176,9 +182,13 @@
         <summary>旅游偏好</summary>
         <label class="muted"><input id="personalizationEnabled" type="checkbox" onchange="savePersonalizationEnabled()" /> 启用个性化</label>
         <div class="inline-editor" style="margin-top:6px">
-          <div class="muted">常用交通方式</div>
-          <label><input id="preferenceTransit" type="checkbox" /> 公交/地铁</label>
-          <label><input id="preferenceDriving" type="checkbox" /> 驾车</label>
+          <fieldset class="transport-preferences"><legend>常用交通方式 <small>可多选</small></legend>
+            <div class="transport-options">
+              <label><input id="preferenceTransit" type="checkbox" /><span>公交 / 地铁<small>日常公共交通</small></span></label>
+              <label><input id="preferenceDriving" type="checkbox" /><span>驾车<small>自己开车出行</small></span></label>
+            </div>
+            <p class="muted">选择你平时愿意使用的方式。具体行程中仍可单独设置。</p>
+          </fieldset>
           <label>偏好地点类别（逗号分隔）<input id="preferredCategories" placeholder="博物馆，公园" /></label>
           <label>希望避开的标签（逗号分隔）<input id="explicitAvoidTags" placeholder="人多拥挤，交通不便" /></label>
           <button class="secondary" onclick="saveExplicitPreferences()">保存主动偏好</button>
@@ -190,20 +200,95 @@
         </div>
         <div id="preferenceSummary" class="log">正在加载…</div>
       </details>
+<details id="recoveryCodePanel" style="margin-top:8px">
+  <summary>账号恢复码</summary>
+  <p class="muted">提前保存恢复码，忘记密码时可自助重置。恢复码相当于备用钥匙，请离线保管，不要发给他人。每次生成会替换旧码；使用、改密或管理员重置后失效。</p>
+  <label for="recoveryCurrentPassword">验证当前密码</label><input id="recoveryCurrentPassword" type="password" autocomplete="current-password" maxlength="128" />
+  <button id="createRecoveryButton" class="secondary" onclick="createRecoveryCode()">生成 / 更换恢复码</button>
+  <p id="recoveryCodeStatus" class="log" role="status"></p>
+  <label id="recoveryCodeLabel" hidden>仅本次显示，关闭后不可再次查看<textarea id="recoveryCodeValue" readonly rows="3" spellcheck="false" autocomplete="off" aria-label="请离线保存恢复码"></textarea></label>
+</details>
+<button id="logoutButton" class="secondary" style="display:none" onclick="doLogout()">退出登录</button>
 </dialog>
 
 
-<div class="layout">
-  <!-- 左侧操作面板 -->
-  <div class="panel" id="sidePanel">
+<section id="welcomeScene" class="welcome-scene" aria-label="欢迎来到U友与U">
+<svg class="welcome-drawing" viewBox="0 0 1440 850" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+<path d="M-80 760Q300 625 690 744T1520 720V900H-80Z" fill="#e7eddc"/>
+<path d="M-80 815Q350 735 740 813T1520 775V900H-80Z" fill="#dce7cb"/>
+<path d="M580 870Q620 805 730 775" fill="none" stroke="#faf4df" stroke-width="38" stroke-linecap="round"/>
+<image href="/assets/welcome-animal-friends-v1.png" x="480" y="450" width="480" height="320" preserveAspectRatio="xMidYMid meet"/>
+<g fill="none" stroke="#9aaf85" stroke-width="3" stroke-linecap="round"><path d="M300 773l-4-13m4 7 9-8m725 28 3-16m-3 10-7-7M1117 803l4-17m-4 8-7-7"/></g>
+<g fill="#dfbd79"><circle cx="310" cy="754" r="4"/><circle cx="1029" cy="770" r="4"/></g>
+</svg>
+  <div class="welcome-copy"><h1>和你一起，出去走走。</h1><p>一顿饭，一场散步，一段好时光。</p></div>
+  <div class="welcome-clouds">
+    <button id="cloudEntry" class="cloud-entry" onclick="openWelcomeLogin()" aria-controls="welcomeLoginPanel" aria-expanded="false"><svg viewBox="0 0 300 140" aria-hidden="true"><path d="M48 116C2 116 2 58 45 57C39 12 105 4 121 41C143 8 203 23 203 58C250 29 288 59 283 87C281 113 258 121 229 119L48 116Z" fill="#fffef9" stroke="#b6c5c5" stroke-width="2.2" stroke-linejoin="round"/></svg><span>点一点云朵<br><small>一起出发 →</small></span></button>
+    <div class="cloud-companion" aria-hidden="true"><svg viewBox="0 0 300 140" aria-hidden="true"><path d="M48 116C2 116 2 58 45 57C39 12 105 4 121 41C143 8 203 23 203 58C250 29 288 59 283 87C281 113 258 121 229 119L48 116Z" fill="#fffef9" stroke="#b6c5c5" stroke-width="2.2" stroke-linejoin="round"/></svg></div>
+  </div>
+  <button class="welcome-direct" onclick="openWelcomeLogin()">登录 / 注册</button>
+  <div id="welcomeLoginPanel" hidden><button class="login-back" onclick="closeWelcomeLogin()">← 回到风景里</button><div id="loginStep">
+      <h2 id="authTitle">欢迎回来</h2>
+      <form onsubmit="event.preventDefault(); doLogin()">
+        <div class="row">
+          <input id="username" aria-label="用户名" placeholder="用户名（3～32位字母、数字或下划线）"
+                 autocomplete="username" maxlength="32" style="flex:1" required />
+        </div>
+        <div class="row" style="margin-top:6px">
+          <input id="password" aria-label="密码" type="password" placeholder="密码"
+                 autocomplete="current-password" maxlength="128" style="flex:1" required />
+        </div>
+        <div id="registerFields" style="display:none;margin-top:6px">
+          <input id="passwordConfirm" aria-label="确认密码" type="password" placeholder="再次输入密码"
+                 autocomplete="new-password" maxlength="15" style="width:100%;box-sizing:border-box" />
+          <input id="name" aria-label="昵称" placeholder="昵称（选填，默认使用用户名）" maxlength="50"
+                 style="width:100%;box-sizing:border-box;margin-top:6px" />
+          <div class="muted">密码需8～15个字符；大小写和空格会保留。无需手机号。</div>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <button id="loginButton" type="submit">登录</button>
+          <button id="authModeButton" class="secondary" type="button" onclick="toggleAuthMode()">注册新账号</button>
+        </div>
+      </form>
+      <div class="muted" style="margin-top:6px">已有手机号账号保留原数据，请联系本机管理员绑定用户名及密码。忘记密码可使用预先保存的恢复码，未保存时由管理员核实处理。</div>
+      <details id="passwordRecoveryPanel" style="margin-top:12px"><summary>忘记密码</summary>
+  <p class="muted">输入此前离线保存的恢复码。未生成或遗失恢复码，请联系本机管理员核实账号归属；不会仅凭用户名重置。</p>
+  <form onsubmit="event.preventDefault(); recoverPassword()">
+    <label for="recoverUsername">要恢复的用户名</label><input id="recoverUsername" autocomplete="username" maxlength="32" required />
+    <label for="recoverCode">一次性恢复码</label><input id="recoverCode" type="password" autocomplete="off" maxlength="80" required />
+    <label for="recoverNewPassword">新密码（8～15字符）</label><input id="recoverNewPassword" type="password" autocomplete="new-password" minlength="8" maxlength="15" required />
+    <label for="recoverConfirmPassword">再次输入新密码</label><input id="recoverConfirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="15" required />
+    <button id="recoverPasswordButton" type="submit">重置密码</button>
+    <p id="recoverPasswordStatus" class="log" role="status"></p>
+  </form>
+</details>
+      <div id="loginStatus" class="log" role="status" aria-live="polite"></div>
+    </div></div>
 
-    <nav id="featureNav" class="requires-auth flow-hidden" aria-label="功能导航">
-      <button class="secondary" data-feature="trips" onclick="selectFeature('trips')">我的行程</button>
-      <button class="secondary" data-feature="saved" onclick="selectFeature('saved')">收藏地点</button>
-      <button class="secondary" data-feature="meeting" onclick="selectFeature('meeting')">共同约点</button>
-      <button class="secondary" data-feature="route" onclick="selectFeature('route')">路线规划</button>
-      <button class="secondary" data-feature="assistant" onclick="selectFeature('assistant')">行程助手</button>
-    </nav>
+</section><div class="journal-shell" id="journalShell" hidden>
+<aside class="journal-sidebar"><nav id="featureNav" aria-label="功能导航">
+  <div class="kite-section" style="--kite:#e6a18a">
+    <div class="kite-heading"><span class="kite-icon" aria-hidden="true">✦</span> 行程与收藏</div>
+    <div class="kite-children"><button data-feature="trips" onclick="selectFeature('trips')">我的行程</button><button data-feature="saved" onclick="selectFeature('saved')">收藏地点</button></div>
+  </div>
+  <div class="kite-section" style="--kite:#e4c47b">
+    <div class="kite-heading"><span class="kite-icon" aria-hidden="true">⌁</span> 结伴出行</div>
+    <div class="kite-children"><button data-feature="meeting" onclick="selectFeature('meeting')">共同约点</button><button data-feature="route" onclick="selectFeature('route')">路线规划</button></div>
+  </div>
+  <div class="kite-section" style="--kite:#c2afd9">
+    <div class="kite-heading"><span class="kite-icon" aria-hidden="true">✧</span> 助手与灵感</div>
+    <div class="kite-children"><button data-feature="assistant" onclick="selectFeature('assistant')">行程助手</button><button data-feature="import" onclick="selectFeature('import')">灵感导入</button></div>
+  </div>
+</nav></aside>
+<main class="journal-main">
+  <div class="workspace-heading"><div><div class="eyebrow" id="workspaceEyebrow">YOUR TRAVEL JOURNAL</div><h1 id="workspaceTitle">我的行程</h1><p id="workspaceDescription">下一段好时光，从这里开始。</p></div>
+  <div class="workspace-meta"><span>私人手账</span><span id="workspaceStatus">尚未选择行程</span></div>
+  <button class="mobile-map-switch secondary" id="mobileMapSwitch" onclick="toggleJournalMap()">查看地图</button></div>
+  <div class="layout workspace-grid" id="workspaceGrid" data-feature="trips">
+  <div class="panel" id="sidePanel"><div class="notebook-heading"><span id="notebookLabel">TRAVEL NOTES</span><b>今天，想去哪里？</b></div><div class="step-tabs" id="journalSteps" aria-label="当前功能步骤"></div>
+
+
+
     <section id="savedPlacesStep" class="requires-auth flow-hidden">
       <h2>收藏地点</h2>
       <div class="muted">收藏跨行程保留；标签、备注、评价和回忆仅自己可见，加入行程不会公开。</div>
@@ -251,35 +336,10 @@
       <div id="placeSearchResults"></div>
     </div>
 
-    <div id="loginStep">
-      <h2 id="authTitle">1. 账号登录</h2>
-      <form onsubmit="event.preventDefault(); doLogin()">
-        <div class="row">
-          <input id="username" aria-label="用户名" placeholder="用户名（3～32位字母、数字或下划线）"
-                 autocomplete="username" maxlength="32" style="flex:1" required />
-        </div>
-        <div class="row" style="margin-top:6px">
-          <input id="password" aria-label="密码" type="password" placeholder="密码"
-                 autocomplete="current-password" maxlength="128" style="flex:1" required />
-        </div>
-        <div id="registerFields" style="display:none;margin-top:6px">
-          <input id="passwordConfirm" aria-label="确认密码" type="password" placeholder="再次输入密码"
-                 autocomplete="new-password" maxlength="15" style="width:100%;box-sizing:border-box" />
-          <input id="name" aria-label="昵称" placeholder="昵称（选填，默认使用用户名）" maxlength="50"
-                 style="width:100%;box-sizing:border-box;margin-top:6px" />
-          <div class="muted">密码需8～15个字符；大小写和空格会保留。无需手机号。</div>
-        </div>
-        <div class="row" style="margin-top:6px">
-          <button id="loginButton" type="submit">登录</button>
-          <button id="authModeButton" class="secondary" type="button" onclick="toggleAuthMode()">注册新账号</button>
-        </div>
-      </form>
-      <div class="muted" style="margin-top:6px">已有手机号账号保留原数据，请联系本机管理员绑定用户名及密码。忘记密码暂由管理员重置。</div>
-      <div id="loginStatus" class="log" role="status" aria-live="polite"></div>
-    </div>
+
 
     <div id="tripStep" class="requires-auth flow-hidden">
-      <h2>2. 创建 / 加入 trip</h2>
+      <h2>我的行程</h2>
       <div class="row">
         <input id="tripTitle" placeholder="trip 标题" style="flex:1" />
         <button onclick="doCreateTrip()">创建</button>
@@ -308,7 +368,7 @@
     </div>
 
     <div class="requires-trip flow-hidden workflow-choice">
-      <h2>3. 选择规划方式</h2>
+      <h2>这次怎样一起出发</h2>
       <div class="row">
         <button id="meetingModeButton" class="secondary" onclick="chooseWorkflow('meeting')" style="flex:1">共同约点</button>
         <button id="routeModeButton" class="secondary" onclick="chooseWorkflow('route')" style="flex:1">多地点路线</button>
@@ -345,7 +405,7 @@
     </div>
 
     <div id="startStep" class="requires-trip flow-hidden">
-      <h2>3. 我的出发点</h2>
+      <h2>大家从哪里出发</h2>
       <div class="row">
         <label><input type="radio" name="mode" value="driving" checked /> 自驾</label>
         <label><input type="radio" name="mode" value="transit" /> 公交/步行/打车</label>
@@ -364,7 +424,7 @@
     </div>
 
     <div id="participantStep" class="requires-trip flow-hidden">
-      <h2>4. 参与者</h2>
+      <h2>同行的小伙伴</h2>
       <div class="row">
         <button class="secondary" onclick="refreshParticipants()" style="flex:1">刷新参与者</button>
       </div>
@@ -372,7 +432,7 @@
     </div>
 
     <div id="meetingWorkflow" data-workflow="meeting" class="flow-hidden">
-      <h2>5. 约点推荐</h2>
+      <h2>找一个刚刚好的碰面地点</h2>
       <div class="row">
         <select id="objective">
           <option value="minimax">公平优先（最小化最长通勤）</option>
@@ -384,7 +444,7 @@
     </div>
 
     <div id="destinationWorkflow" data-workflow="route" class="flow-hidden">
-      <h2>6. 共同添加想去地点（Phase 2A）</h2>
+      <h2>这一路，想去的地方</h2>
       <input id="destinationName" placeholder="地点名称" maxlength="120" style="width:100%" />
       <input id="destinationAddress" placeholder="地址（选填）" maxlength="300" style="width:100%;margin-top:6px" />
       <div class="row" style="margin-top:6px">
@@ -403,7 +463,7 @@
     </div>
 
     <div id="routeWorkflow" data-workflow="route" class="flow-hidden">
-      <h2>7. 多地点路线规划（Phase 2B）</h2>
+      <h2>安排这一程的时间</h2>
       <label class="muted">开始时间</label><input id="planStart" type="datetime-local" style="width:100%" />
       <label class="muted">结束时间</label><input id="planEnd" type="datetime-local" style="width:100%" />
       <div class="row">
@@ -422,7 +482,7 @@
     </div>
 
     <div id="importWorkflow" data-workflow="route" class="flow-hidden">
-      <h2>8. 分享文本导入地点（Phase 3）</h2>
+      <h2>把灵感，放进旅行里</h2>
       <textarea id="sharedText" maxlength="10000" rows="7" style="width:100%;box-sizing:border-box" placeholder="可直接粘贴高德地点分享链接，或输入：&#10;名称：故宫博物院&#10;地址：北京市东城区景山前街4号&#10;&#10;也支持：名称｜地址｜品类｜人均｜推荐理由"></textarea>
       <select id="sourcePlatform" style="width:100%;margin-top:6px"><option value="generic">普通文本</option><option value="xiaohongshu">小红书</option><option value="dianping">大众点评</option><option value="meituan">美团</option><option value="other">其他来源</option></select>
       <textarea id="commentsText" maxlength="20000" rows="5" style="width:100%;box-sizing:border-box;margin-top:6px" placeholder="可选：粘贴评论。每条普通评论单独一行；如需保留楼层关系，可使用：&#10;评论：味道很好但排队久&#10;回复：周末要等一小时"></textarea>
@@ -435,29 +495,27 @@
       <div class="log">支持高德地点/导航分享链接及结构化文本；解析结果必须人工确认后才会加入当前 trip。</div>
       <div id="sharedTextResults"></div>
     </div>
-  </div>
 
-  <!-- 右侧地图 -->
-  <div id="mapWrap">
+  <div class="journal-actions" id="journalActions" hidden><button class="secondary" id="journalBack" onclick="journalPreviousStep()">上一步</button><button class="primary" id="journalNext" onclick="journalNextStep()">下一步</button></div>
+  </div>
+  <div class="map-column"><div class="map-toolbar"><b>这一程的地图</b><span>每一次出发，都有迹可循</span></div><div id="mapWrap">
     <div id="map"></div>
     <canvas id="fallback" style="display:none"></canvas>
     <div class="map-tip" id="mapTip"></div>
   </div>
-</div>
-
-<!-- 底部结果 -->
-<div style="padding:0 16px 16px">
-  <div class="panel" id="resultPanel" data-result-workflow="meeting" style="display:none">
+  <div class="map-caption"><span>● 成员起点</span><span>● 想去地点</span><span>● 当前选点</span></div>
+  <div class="journal-results" id="journalResults"><div class="panel" id="resultPanel" data-result-workflow="meeting" style="display:none">
     <h2>推荐结果</h2>
     <div id="resultBody"></div>
   </div>
-  <div class="panel" id="itineraryPanel" data-result-workflow="route" style="display:none;margin-top:12px">
+<div class="panel" id="itineraryPanel" data-result-workflow="route" style="display:none;margin-top:12px">
     <h2>多人多地点路线方案</h2>
     <div class="muted">地图：不同颜色虚线为每位参与者赴约路线，紫色实线为集合后共同路线；标注“估算”的路段为直线降级。</div>
     <div id="itineraryBody"></div>
+  </div></div></div>
   </div>
-</div>
-
+</main></div>
+<script src="/assets/journal-ui.js?v=20261014-review2"></script>
 <script>
 // ===== 全局状态 =====
 const state = {
@@ -548,7 +606,7 @@ document.getElementById('accountDialog').addEventListener('close', clearPassword
 let registering = false;
 function toggleAuthMode() {
   registering = !registering;
-  document.getElementById('authTitle').textContent = registering ? '1. 注册账号' : '1. 账号登录';
+  document.getElementById('authTitle').textContent = registering ? '注册新账号' : '欢迎回来';
   document.getElementById('registerFields').style.display = registering ? 'block' : 'none';
   document.getElementById('loginButton').textContent = registering ? '注册并登录' : '登录';
   document.getElementById('authModeButton').textContent = registering ? '返回登录' : '注册新账号';
@@ -560,9 +618,10 @@ function toggleAuthMode() {
 }
 function passwordLength(value) { return [...value].length; }
 function clearPasswordFields() {
-  ['password', 'passwordConfirm', 'currentPassword', 'newPassword', 'newPasswordConfirm']
+  ['password', 'passwordConfirm', 'currentPassword', 'newPassword', 'newPasswordConfirm', 'recoveryCurrentPassword', 'recoverCode', 'recoverNewPassword', 'recoverConfirmPassword', 'recoveryCodeValue']
     .forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('passwordStatus').textContent = '';
+  document.getElementById('recoveryCodeLabel').hidden = true;
 }
 async function doLogin() {
   const username = document.getElementById('username').value.trim().toLowerCase();
@@ -620,10 +679,58 @@ async function changePassword() {
     if (state.tripId) connectWS();
     document.getElementById('passwordStatus').textContent = '密码已修改，其他设备需要重新登录。';
     refreshAccountSessions();
+    refreshRecoveryStatus();
     authChannel?.postMessage({type: 'login', source: pageInstanceId, userName: state.user.name});
     toast('密码已修改');
   } catch (e) { document.getElementById('passwordStatus').textContent = e.message; }
   finally { button.disabled = false; }
+}
+
+async function refreshRecoveryStatus() {
+  const userId=state.user?.id;
+  try {
+    const r=await api('/auth/recovery-code');
+    if(state.user?.id!==userId)return;
+    document.getElementById('recoveryCodeStatus').textContent=r.enabled?'已设置一次性恢复码；原码不能再次查看。':'尚未设置恢复码。';
+  }catch(e){if(state.user?.id===userId)document.getElementById('recoveryCodeStatus').textContent=e.message;}
+}
+
+async function createRecoveryCode() {
+  const userId=state.user?.id,button=document.getElementById('createRecoveryButton');
+  if(!userId || button.disabled)return;
+  const current_password=document.getElementById('recoveryCurrentPassword').value;
+  if(!current_password)return toast('请输入当前密码',true);
+  button.disabled=true;
+  try {
+    const accepted=await confirmJournalAction({title:'生成新的恢复码',message:'原恢复码将立即失效。新码只显示一次，请离线保存。',confirmLabel:'生成恢复码'});
+    if(!accepted || state.user?.id!==userId || !document.getElementById('accountDialog').open)return;
+    const r=await api('/auth/recovery-code','POST',{current_password});
+    if(state.user?.id!==userId || !document.getElementById('accountDialog').open)return;
+    document.getElementById('recoveryCodeValue').value=r.recovery_code;
+    document.getElementById('recoveryCodeLabel').hidden=false;
+    document.getElementById('recoveryCodeStatus').textContent='新恢复码已生成。请离线保存；原码已失效。';
+  }catch(e){if(state.user?.id===userId)document.getElementById('recoveryCodeStatus').textContent=e.message;}
+  finally{document.getElementById('recoveryCurrentPassword').value='';button.disabled=false;}
+}
+
+async function recoverPassword() {
+  const button=document.getElementById('recoverPasswordButton');
+  if(button.disabled)return;
+  const username=document.getElementById('recoverUsername').value.trim().toLowerCase();
+  const recovery_code=document.getElementById('recoverCode').value.replace(/[-\s]/g,'').toLowerCase();
+  const new_password=document.getElementById('recoverNewPassword').value;
+  if(!/^[a-z0-9_]{3,32}$/.test(username) || !/^[a-f0-9]{48}$/.test(recovery_code))return toast('请核对用户名和恢复码格式',true);
+  if(passwordLength(new_password)<8 || passwordLength(new_password)>15 || new_password!==document.getElementById('recoverConfirmPassword').value)return toast('请填写8～15字符的新密码，并确保两次一致',true);
+  button.disabled=true;
+  try {
+    await api('/auth/password/recover','POST',{username,recovery_code,new_password});
+    clearSession();clearPasswordFields();
+    document.getElementById('passwordRecoveryPanel').open=false;
+    document.getElementById('username').value=username;
+    openWelcomeLogin();
+    document.getElementById('loginStatus').textContent='密码已重置，旧会话已退出。请重新登录，并生成新的恢复码。';
+  }catch(e){document.getElementById('recoverPasswordStatus').textContent=e.message;}
+  finally{button.disabled=false;document.getElementById('recoverCode').value='';document.getElementById('recoverNewPassword').value='';document.getElementById('recoverConfirmPassword').value='';}
 }
 
 async function openAccount() {
@@ -635,6 +742,7 @@ async function openAccount() {
   document.getElementById('sessionStatus').textContent = '正在加载…';
   document.getElementById('accountDialog').showModal();
   refreshAccountSessions();
+  refreshRecoveryStatus();
   try {
     const profile = await api('/users/me/profile');
     if (state.user?.id !== userId) return;
@@ -650,7 +758,7 @@ async function refreshAccountSessions() {
   } catch (e) { document.getElementById('sessionStatus').textContent = e.message; }
 }
 async function revokeOtherSessions() {
-  if (!confirm('退出此账号的其他登录会话？当前页面会保持登录。')) return;
+  if (!await confirmJournalAction({title:'退出其他会话',message:'退出此账号的其他登录会话，当前页面保持登录。',confirmLabel:'退出其他会话'})) return;
   const button = document.getElementById('revokeSessionsButton');
   if (button.disabled) return;
   button.disabled = true;
@@ -748,6 +856,23 @@ function updateFlowUI() {
   document.getElementById('tripManage').style.display = state.currentTrip?.my_role === 'creator' ? 'flex' : 'none';
   document.getElementById('reopenTripButton').style.display = tripStatus === 'confirmed' ? 'block' : 'none';
   document.getElementById('completeTripButton').style.display = tripStatus === 'confirmed' ? 'block' : 'none';
+  updateJournalShell();
+  applyTripEditability();
+}
+
+function applyTripEditability() {
+  const locked=state.currentTrip?.status!=='active';
+  const primary=state.currentTrip?.primary_workflow==='meeting'?'meeting':'route';
+  const other=state.workflowMode && state.workflowMode!==primary;
+  const groups=[
+    ['#startStep input, #startStep button',locked],
+    ['#routeWorkflow input, #routeWorkflow select, #routeWorkflow textarea, #routeWorkflow button',
+      locked || other || state.currentTrip?.my_role!=='creator'],
+    ['#meetingWorkflow input, #meetingWorkflow select, #meetingWorkflow button',locked || other],
+    ['#destinationName, #destinationAddress, #destinationStay, #destinationWindowStart, #destinationWindowEnd, #destinationWorkflow button[onclick="addDestination()"]',locked || other],
+    ['#importWorkflow input, #importWorkflow select, #importWorkflow textarea, #importWorkflow button',locked || other],
+  ];
+  for(const [selector,disabled] of groups)document.querySelectorAll(selector).forEach(control=>control.disabled=Boolean(disabled));
 }
 
 async function chooseWorkflow(mode) {
@@ -776,6 +901,7 @@ function clearTripState() {
   state.feedbackByDestination = {};
   state.importedCandidates = [];
   state.itinerary = null;
+  state.routeComparison = null;
   state.votes = {};
   state.voting.clear();
   state.picked = null;
@@ -1076,10 +1202,13 @@ async function refreshMyTrips() {
     select.innerHTML = '<option value="">请先登录</option>';
     return;
   }
+  const userId = state.user?.id;
   try {
     const status = document.getElementById('tripStatusFilter')?.value || '';
     const result = await api(`/trips${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+    if (state.user?.id !== userId) return;
     state.myTrips = result.trips || [];
+    updateJournalTripCards();
     const statusLabels = { active: '规划中', confirmed: '已确认', completed: '已完成' };
     select.innerHTML = '<option value="">选择创建或加入过的 trip</option>' + state.myTrips.map(item =>
       `<option value="${Number(item.trip_id)}">#${Number(item.trip_id)} ${escapeHtml(item.title)}（${item.role === 'creator' ? '我创建的' : '我加入的'} / ${statusLabels[item.status] || escapeHtml(item.status)}）</option>`
@@ -1095,8 +1224,12 @@ async function openSelectedTrip() {
   } catch (e) { toast(e.message, true); }
 }
 
+let tripOpenRequest = 0;
 async function openTrip(tripId) {
+  const requestId = ++tripOpenRequest;
+  const userId = state.user?.id;
   const trip = await api(`/trips/${tripId}`);
+  if (state.user?.id !== userId || requestId !== tripOpenRequest) throw new Error('选择已变化，请重新选择行程');
   clearTripState();
   state.tripId = Number(tripId);
   state.currentTrip = trip;
@@ -1104,6 +1237,7 @@ async function openTrip(tripId) {
   renderTripInfo();
   updateFlowUI();
   await Promise.all([refreshParticipants(), refreshDestinations(), fetchPlanningSettings(), fetchLatestItinerary()]);
+  if (state.user?.id !== userId || requestId !== tripOpenRequest) throw new Error('选择已变化，请重新选择行程');
   if (trip.status === 'completed') await refreshFeedback();
   connectWS();
   toast(`已打开 trip #${tripId}`);
@@ -1127,6 +1261,8 @@ async function doCreateTrip() {
     toast('trip 创建成功');
     await refreshMyTrips();
     await openTrip(r.trip_id);
+    closeJournalDialog('createTripDialog');closeJournalDialog('joinTripDialog');
+    selectFeature(state.currentTrip.primary_workflow==='meeting'?'meeting':'route');
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1138,27 +1274,37 @@ async function doJoinTrip() {
     toast(`已加入 trip #${r.trip_id}`);
     await refreshMyTrips();
     await openTrip(r.trip_id);
+    closeJournalDialog('createTripDialog');closeJournalDialog('joinTripDialog');
+    selectFeature(state.currentTrip.primary_workflow==='meeting'?'meeting':'route');
   } catch (e) { toast(e.message, true); }
 }
 
 async function reopenCurrentTrip() {
   if (!state.tripId) return;
-  if (!confirm('重新编辑会使已确认路线变为历史版本，需要重新规划并确认。是否继续？')) return;
+  const tripId=state.tripId,userId=state.user?.id;
+  if (!await confirmJournalAction({title:'重新编辑行程',message:'重新编辑会使已确认路线变为历史版本，需要重新规划并确认。',confirmLabel:'重新编辑'}))return;
+  if(state.tripId!==tripId || state.user?.id!==userId)return;
   try {
-    await api(`/trips/${state.tripId}/reopen`, 'POST', {});
+    await api('/trips/'+tripId+'/reopen', 'POST', {});
+    if(state.tripId!==tripId || state.user?.id!==userId)return;
     await refreshMyTrips();
-    await openTrip(state.tripId);
+    if(state.tripId!==tripId || state.user?.id!==userId)return;
+    await openTrip(tripId);
     toast('trip 已重新开启，可以修改并重新规划');
   } catch (e) { toast(e.message, true); }
 }
 
 async function completeCurrentTrip() {
   if (!state.tripId || state.currentTrip?.status !== 'confirmed') return;
-  if (!confirm('确认本次行程已经实际完成吗？完成后规划和地点将永久只读。')) return;
+  const tripId=state.tripId,userId=state.user?.id;
+  if (!await confirmJournalAction({title:'完成这次行程',message:'请确认本次行程已经实际完成。完成后规划和地点将永久只读，可以评价去过的地点。',confirmLabel:'标记已完成'}))return;
+  if(state.tripId!==tripId || state.user?.id!==userId || state.currentTrip?.status!=='confirmed')return;
   try {
-    await api(`/trips/${state.tripId}/complete`, 'POST', {});
+    await api('/trips/'+tripId+'/complete', 'POST', {});
+    if(state.tripId!==tripId || state.user?.id!==userId)return;
     await refreshMyTrips();
-    await openTrip(state.tripId);
+    if(state.tripId!==tripId || state.user?.id!==userId)return;
+    await openTrip(tripId);
     toast('trip 已标记为完成');
   } catch (e) { toast(e.message, true); }
 }
@@ -1173,6 +1319,13 @@ async function deleteCurrentTrip() {
     await refreshMyTrips();
     toast('trip 已删除');
   } catch (e) { toast(e.message, true); }
+}
+
+// Apply only metadata belonging to the current account/trip; late reads must not lower a version.
+function acceptTripVersion(tripId, userId, version) {
+  if (state.tripId !== tripId || state.user?.id !== userId || !state.currentTrip) return false;
+  if (Number.isInteger(version)) state.currentTrip.input_version = Math.max(state.currentTrip.input_version || 0, version);
+  return true;
 }
 
 // ===== 出发点 =====
@@ -1193,6 +1346,7 @@ function submitStart() {
 async function putStart(lat, lng, mode, availableFrom = '', availableUntil = '') {
   if (!state.tripId) return toast('请先创建或加入 trip');
   const statusEl = document.getElementById('startStatus');
+  const tripId = state.tripId, userId = state.user?.id;
   try {
     const r = await api(`/trips/${state.tripId}/participants/me`, 'PUT', {
       start_location: {
@@ -1204,6 +1358,8 @@ async function putStart(lat, lng, mode, availableFrom = '', availableUntil = '')
       available_from: availableFrom ? new Date(availableFrom).toISOString() : null,
       available_until: availableUntil ? new Date(availableUntil).toISOString() : null,
     });
+    if (!acceptTripVersion(tripId, userId, r.input_version)) return;
+    if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
     console.log('[putStart] 成功:', r);
     statusEl.textContent = `✅ 已提交（${mode === 'driving' ? '自驾' : '公交'}）`;
     statusEl.style.color = '#00b578';
@@ -1405,8 +1561,13 @@ function connectWS() {
   ws.onmessage = ev => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
+    if (state.ws !== ws) return;
+    acceptTripVersion(state.tripId, state.user?.id, msg.input_version);
     console.log('[ws] 收到事件:', msg.type);
-    if (msg.type === 'participants_updated') refreshParticipants();
+    if (msg.type === 'participants_updated') {
+      if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
+      refreshParticipants();
+    }
     else if (msg.type === 'meeting_points_ready') {
       fetchMeetingPoints();
       if (state.workflowMode !== 'meeting') toast('共同约点有新结果；切换到“共同约点”可查看');
@@ -1478,9 +1639,10 @@ async function refreshVotes() {
 async function refreshDestinations() {
   if (!state.tripId) return;
   try {
-    const r = await api(`/trips/${state.tripId}/destinations`);
+    const tripId = state.tripId, userId = state.user?.id;
+    const r = await api(`/trips/${tripId}/destinations`);
+    if (!acceptTripVersion(tripId, userId, r.input_version)) return;
     state.destinations = r.destinations;
-    if (state.currentTrip) state.currentTrip.input_version = r.input_version;
     renderDestinations();
     drawAll();
   } catch (e) { console.error('[refreshDestinations] 失败:', e); }
@@ -1679,8 +1841,8 @@ function renderDestinations() {
       ${state.editingFeedbackId === d.id ? feedbackEditorHtml(Number(d.id), mine || {}) : ''}` : '';
     const stayEditor = canEdit && state.editingStayId === d.id ? `<div class="inline-editor">
       <label>预计停留时间（5～720 分钟）<input id="stay-${Number(d.id)}" type="number" min="5" max="720" value="${Number(d.expected_stay_min)}"></label>
-      <label>固定到访开始（选填）<input id="window-start-${Number(d.id)}" type="datetime-local" value="${d.visit_window_start ? isoToLocalInput(d.visit_window_start) : ''}"></label>
-      <label>固定到访结束（选填）<input id="window-end-${Number(d.id)}" type="datetime-local" value="${d.visit_window_end ? isoToLocalInput(d.visit_window_end) : ''}"></label>
+      <label>固定到访开始（选填）<input id="window-start-${Number(d.id)}" type="datetime-local" value="${d.visit_window_start ? toDateTimeLocal(d.visit_window_start) : ''}"></label>
+      <label>固定到访结束（选填）<input id="window-end-${Number(d.id)}" type="datetime-local" value="${d.visit_window_end ? toDateTimeLocal(d.visit_window_end) : ''}"></label>
       <div class="destination-actions"><button onclick="saveDestinationStay(${Number(d.id)})">保存时间约束</button><button class="vote-btn" onclick="editDestinationStay(${Number(d.id)})">取消</button></div>
       <div class="log" id="stay-status-${Number(d.id)}"></div>
     </div>` : '';
@@ -1930,7 +2092,9 @@ function copyImportedToManual(index) {
 async function fetchPlanningSettings(forceFormHydration = false) {
   if (!state.tripId) return;
   try {
-    const settings = await api(`/trips/${state.tripId}/planning-settings`);
+    const tripId = state.tripId, userId = state.user?.id;
+    const settings = await api(`/trips/${tripId}/planning-settings`);
+    if (!acceptTripVersion(tripId, userId, settings.input_version)) return;
     if (forceFormHydration || !state.planningFormDirty) {
       document.getElementById('planStart').value = toDateTimeLocal(settings.planned_start_at);
       document.getElementById('planEnd').value = toDateTimeLocal(settings.planned_end_at);
@@ -1969,14 +2133,17 @@ async function savePlanningSettings() {
   const end = document.getElementById('planEnd').value;
   if (!start || !end) return toast('请选择开始和结束时间', true);
   if (new Date(end) <= new Date(start)) return toast('结束时间必须晚于开始时间', true);
+  const tripId = state.tripId, userId = state.user?.id;
   try {
-    await api(`/trips/${state.tripId}/planning-settings`, 'PUT', {
+    const saved = await api(`/trips/${tripId}/planning-settings`, 'PUT', {
       planned_start_at: new Date(start).toISOString(), planned_end_at: new Date(end).toISOString(),
       group_transport_mode: document.getElementById('groupMode').value,
       optimization_objective: document.getElementById('planObjective').value,
       return_location: readReturnLocation(),
     });
+    if (!acceptTripVersion(tripId, userId, saved.input_version)) return false;
     state.planningFormDirty = false;
+    if (state.itinerary) { state.itinerary.is_stale = true; renderItinerary(); }
     document.getElementById('planLog').textContent = '规划参数已保存';
     return true;
   } catch (e) { toast(e.message, true); return false; }
@@ -1984,22 +2151,32 @@ async function savePlanningSettings() {
 
 async function generateItinerary() {
   const log = document.getElementById('planLog');
+  const tripId = state.tripId, userId = state.user?.id;
   try {
-    if (!await savePlanningSettings()) return;
+    // Members may calculate using the creator's saved parameters.
+    if (state.currentTrip?.my_role === 'creator' && !await savePlanningSettings()) return;
+    if (!acceptTripVersion(tripId, userId)) return;
     log.textContent = '正在计算第一站和全部地点顺序…';
-    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans`, 'POST', {});
-    renderItinerary();
-    drawAll();
+    const plan = await api('/trips/' + tripId + '/itinerary-plans', 'POST', {});
+    if (!acceptTripVersion(tripId, userId, plan.input_version)) return;
+    state.itinerary = plan;
+    refreshRouteComparison();
+    renderItinerary(); drawAll();
     log.textContent = '路线规划完成';
-  } catch (e) { log.textContent = ''; toast(e.message, true); }
+  } catch (e) {
+    if (state.tripId === tripId && state.user?.id === userId) { log.textContent = ''; toast(e.message, true); }
+  }
 }
 
 async function fetchLatestItinerary() {
   if (!state.tripId) return;
+  const tripId = state.tripId, userId = state.user?.id;
   try {
-    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/latest`);
-    renderItinerary();
-    drawAll();
+    const plan = await api('/trips/' + tripId + '/itinerary-plans/latest');
+    if (!acceptTripVersion(tripId, userId, plan.input_version)) return;
+    state.itinerary = plan;
+    refreshRouteComparison();
+    renderItinerary(); drawAll();
   } catch (e) { /* 尚无方案时忽略 */ }
 }
 
@@ -2020,6 +2197,63 @@ function renderRouteSteps(steps) {
     return `<li>${escapeHtml(step.instruction || (step.type === 'driving' ? '继续行驶' : '步行'))}${distance}</li>`;
   }).join('');
   return `<details style="margin-top:6px"><summary>查看具体路线步骤</summary><ol>${items}</ol></details>`;
+}
+
+function itineraryConflicts(plan) {
+  const codes=new Set(['destination_time_window_conflict','participant_leaves_early','participant_cannot_reach_first_stop','return_after_participant_deadline','exceeds_end_time','outside_opening_hours']);
+  return (plan?.warnings || []).filter(item=>codes.has(item.code));
+}
+
+function renderConflictReview(plan) {
+  const issues=itineraryConflicts(plan);
+  if(!issues.length)return '<div class="route-review muted">当前计算未发现已知时间冲突；营业、排队和实时路况仍需核实。</div>';
+  const editable=state.currentTrip?.status==='active' && !plan.is_stale;
+  const creator=state.currentTrip?.my_role==='creator';
+  return '<section class="route-review" aria-label="时间冲突与调整建议"><h3>有 '+issues.length+' 项时间安排需要核对</h3><p class="muted">下列调整只打开编辑表单，不会自动改变行程。保存后请重新生成路线。</p>'+issues.map(item=>{
+    const late=Number(item.late_min);
+    const duration=Number.isFinite(late)&&late>0&&!String(item.message).includes('超出')?'（超出约 '+Math.ceil(late)+' 分钟）':'';
+    const place=Number.isSafeInteger(item.destination_id)?item.destination_id:null;
+    const hint=item.code==='destination_time_window_conflict'?'尝试缩短停留、调整预约时间，或将非必去地点改为可选。':item.code==='outside_opening_hours'?'核实营业时间，调整到访时段或更换地点。':item.code==='exceeds_end_time'?'尝试延后行程结束时间，或减少停留和可选地点。':'核对成员出发与必须结束时间；无法调整时，减少地点或停留时间。';
+    const buttons=editable?'<div class="destination-actions">'+(creator?'<button class="secondary" onclick="openConflictEditor(&quot;time&quot;)">调整行程时间</button>':'')+(creator&&place?'<button class="secondary" onclick="openConflictEditor(&quot;place&quot;,'+place+')">调整该地点</button>':'')+'<button class="secondary" onclick="openConflictEditor(&quot;personal&quot;)">查看我的出发设置</button></div>':'';
+    return '<article><div class="err">'+escapeHtml(item.message || '时间存在冲突')+escapeHtml(duration)+'</div><p>'+escapeHtml(hint)+'</p>'+buttons+'</article>';
+  }).join('')+'</section>';
+}
+
+function openConflictEditor(kind,id) {
+  if(state.currentTrip?.status!=='active')return toast('请先重新编辑行程',true);
+  journalUI.mobileMap=false;
+  selectFeature('route');setJournalStep(kind==='place'?1:0);
+  if(kind==='place') {
+    if(state.currentTrip.my_role!=='creator' || !state.destinations.some(d=>d.id===id))return;
+    state.editingStayId=id;renderDestinations();
+  }
+  const target=document.getElementById(kind==='place'?'stay-'+id:kind==='time'?'planEnd':'availableUntil');
+  if(target){target.scrollIntoView({block:'center',behavior:'smooth'});target.focus();}
+}
+
+async function refreshRouteComparison() {
+  const tripId=state.tripId,userId=state.user?.id,planId=state.itinerary?.plan_id;
+  if(!tripId || !planId)return;
+  try {
+    const result=await api('/trips/'+tripId+'/itinerary-plans/comparison');
+    if(state.tripId!==tripId || state.user?.id!==userId || state.itinerary?.plan_id!==planId)return;
+    if(result.available && result.changes.current_plan_id!==planId)return;
+    state.routeComparison={...result,planId};renderItinerary();
+  }catch(e){/* Comparison failure never hides the current route. */}
+}
+
+function renderRouteComparison(plan) {
+  const result=state.routeComparison;
+  if(!result || result.planId!==plan.plan_id)return '';
+  if(!result.available)return '<div class="muted">生成第二版路线后，可与上一版比较。</div>';
+  const c=result.changes;
+  const delta=(value,unit)=>value===0?'不变':(value>0?'增加 ':'减少 ')+Math.abs(value)+' '+unit;
+  const names=items=>items.map(item=>escapeHtml(item.name)).join('、') || '无';
+  return '<details class="route-review"><summary>与上一版路线比较</summary><p class="muted">比较保存的路线快照，不会重新调用地图。'+(c.same_inputs?'两版使用相同输入。':'两版输入已变化。')+(result.previous_is_stale?'上一版已过期，仅供比较。':'')+'</p>'
+    +'<ul><li>交通耗时：'+delta(c.travel_delta_min,'分钟')+'</li><li>完整行程：'+delta(c.duration_delta_min,'分钟')+'</li><li>共同路段距离：'+delta(c.distance_delta_km,'km')+'</li><li>新增：'+names(c.added)+'</li><li>移除：'+names(c.removed)+'</li></ul>'
+    +c.moved.map(item=>'<p>'+escapeHtml(item.name)+'：第 '+Number(item.before)+' 站 → 第 '+Number(item.after)+' 站</p>').join('')
+    +c.timing_changed.map(item=>'<p>'+escapeHtml(item.name)+'：原 '+escapeHtml(formatTime(item.before_arrival))+'～'+escapeHtml(formatTime(item.before_leave))+'；现 '+escapeHtml(formatTime(item.after_arrival))+'～'+escapeHtml(formatTime(item.after_leave))+'</p>').join('')
+    +'<p>共同返程终点：'+(c.return_changed?'已变化':'不变')+'；提示数量：'+c.previous_warning_count+' → '+c.current_warning_count+'</p></details>';
 }
 
 function renderItinerary() {
@@ -2044,7 +2278,7 @@ function renderItinerary() {
         : '<div class="muted">第一站（全员集合）</div>'}
       <div>${formatTime(s.arrival_at)} 到达 → ${formatTime(s.leave_at)} 离开</div></div>`;
   }).join('');
-  const warnings = (plan.warnings || []).map(w => `<div class="err">⚠ ${escapeHtml(w.message)}</div>`).join('');
+  const warnings = (plan.warnings || []).filter(w=>!itineraryConflicts(plan).includes(w)).map(w => `<div class="err">⚠ ${escapeHtml(w.message)}</div>`).join('');
   const me = state.participants.find(p => p.user_id === state.user?.id);
   const confirmButton = me?.role === 'creator' && !plan.is_stale && plan.status !== 'confirmed'
     ? `<button style="margin-top:10px" onclick="confirmItinerary(${Number(plan.plan_id)})">确认最终方案</button>` : '';
@@ -2053,30 +2287,43 @@ function renderItinerary() {
     <div class="tag green">完整行程 ${plan.total_duration_min} 分钟</div>
     ${plan.status === 'confirmed' ? '<div class="tag green">已确认最终方案</div>' : ''}
     ${plan.is_stale ? '<div class="err">地点或参数已变化，本方案已过期</div>' : ''}
-    ${warnings}<h3>共同访问顺序</h3>${stops}
+    ${renderConflictReview(plan)}${renderRouteComparison(plan)}${warnings}<h3>共同访问顺序</h3>${stops}
     ${plan.return_leg ? `<div class="destination-card"><b>共同返程：${escapeHtml(plan.return_leg.return_location?.address || '指定终点')}</b><div>${formatTime(plan.return_leg.depart_at)} 出发 → ${formatTime(plan.return_leg.arrival_at)} 到达</div><div>${Number(plan.return_leg.travel_time_min)} 分钟 · ${Number(plan.return_leg.distance_km)} km${plan.return_leg.estimated ? '（直线估算，不可导航）' : '（路线工具）'}</div>${renderRouteSteps(plan.return_leg.steps)}</div>` : ''}
     ${confirmButton}`;
 }
 
+let itineraryConfirmationBusy = false;
 async function confirmItinerary(planId) {
+  if (itineraryConfirmationBusy) return;
+  const tripId=state.tripId, userId=state.user?.id, plan=state.itinerary;
+  if (!plan || plan.plan_id!==planId || plan.is_stale || state.currentTrip?.status!=='active') {
+    return toast('方案已变化，请重新查看当前路线',true);
+  }
+  itineraryConfirmationBusy=true;
   try {
-    const hasEstimated = (state.itinerary?.participant_arrivals || []).some(item => item.estimated)
-      || (state.itinerary?.route_legs || []).some(item => item.estimated);
-    let acceptEstimatedRoutes = false;
-    if (hasEstimated) {
-      acceptEstimatedRoutes = confirm('方案包含直线估算路段，不能作为正式导航。仍要接受估算并锁定该方案吗？');
-      if (!acceptEstimatedRoutes) return;
-    }
-    state.itinerary = await api(`/trips/${state.tripId}/itinerary-plans/${planId}/confirm`, 'POST', {
-      accept_estimated_routes: acceptEstimatedRoutes,
+    const hasEstimated=(plan.participant_arrivals || []).some(item=>item.estimated)
+      || (plan.route_legs || []).some(item=>item.estimated);
+    const accepted=await confirmJournalAction({
+      title:'确认最终方案',
+      message:'行程：'+state.currentTrip.title+'\n地点：'+plan.ordered_stops.map(item=>item.name).join(' → ')
+        +'\n确认后将锁定当前方案；之后需要重新编辑才能更改规划。'
+        +(itineraryConflicts(plan).length?'\n仍有时间冲突：\n'+itineraryConflicts(plan).map(item=>item.message).join('\n'):''),
+      confirmLabel:'锁定此方案',
+      acknowledgement:hasEstimated?'我已了解方案含直线估算路段，不可用于正式导航，仍接受此估算方案。':'',
     });
-    if (state.currentTrip) state.currentTrip.status = 'confirmed';
-    renderTripInfo();
-    renderItinerary();
-    updateFlowUI();
-    refreshMyTrips();
+    if(!accepted)return;
+    if(state.tripId!==tripId || state.user?.id!==userId || state.itinerary?.plan_id!==planId
+      || state.itinerary?.input_version!==plan.input_version || state.itinerary?.is_stale
+      || state.currentTrip?.status!=='active')return toast('行程或方案已变化，请重新核对',true);
+    const confirmed=await api('/trips/'+tripId+'/itinerary-plans/'+planId+'/confirm','POST',{
+      accept_estimated_routes:hasEstimated,
+    });
+    if(!acceptTripVersion(tripId,userId,confirmed.input_version))return;
+    state.itinerary=confirmed;state.currentTrip.status='confirmed';
+    renderTripInfo();renderItinerary();updateFlowUI();refreshMyTrips();
     toast('最终方案已确认');
-  } catch (e) { toast(e.message, true); }
+  } catch(e) { if(state.tripId===tripId && state.user?.id===userId)toast(e.message,true); }
+  finally { itineraryConfirmationBusy=false; }
 }
 
 function candidateId(candidate) {
@@ -2107,7 +2354,9 @@ async function castVote(id, value) {
 async function refreshParticipants(forceFormHydration = false) {
   if (!state.tripId) return;
   try {
-    const r = await api(`/trips/${state.tripId}/participants`);
+    const tripId = state.tripId, userId = state.user?.id;
+    const r = await api(`/trips/${tripId}/participants`);
+    if (!acceptTripVersion(tripId, userId, r.input_version)) return;
     state.participants = r.participants;
     if (forceFormHydration || !state.participantFormDirty) hydrateMyParticipantForm();
     renderParticipants();
@@ -2553,13 +2802,13 @@ function applyFeatureNavigation() {
   const feature = collectionState.feature;
   const groups = {
     trips: ['tripStep'], saved: ['savedPlacesStep'], meeting: ['startStep','participantStep','meetingWorkflow'],
-    route: ['startStep','participantStep','destinationWorkflow','routeWorkflow','importWorkflow'],
-    assistant: ['assistantStep','startStep','participantStep']
+    route: ['startStep','participantStep','destinationWorkflow','routeWorkflow'], import: ['importWorkflow'],
+    assistant: ['assistantStep']
   };
   const always = ['loginStep', 'featureNav'];
   const ids = ['tripStep','savedPlacesStep','startStep','participantStep','meetingWorkflow','destinationWorkflow','routeWorkflow','importWorkflow','assistantStep'];
   ids.forEach(id => document.getElementById(id)?.classList.toggle('nav-hidden', !(groups[feature] || []).includes(id)));
-  document.querySelector('.location-tools')?.classList.toggle('nav-hidden', !['route','meeting','assistant'].includes(feature));
+  document.querySelector('.location-tools')?.classList.toggle('nav-hidden', !['route','meeting','assistant','import'].includes(feature));
   document.querySelector('.workflow-choice')?.classList.toggle('nav-hidden', !['route','meeting'].includes(feature));
   document.querySelectorAll('[data-feature]').forEach(button => button.classList.toggle('nav-active', button.dataset.feature === feature));
   document.getElementById('savedPlacesStep').classList.toggle('flow-hidden', !state.user);
@@ -2567,15 +2816,16 @@ function applyFeatureNavigation() {
   document.getElementById('featureTripHint').textContent = !state.tripId && !['trips','saved'].includes(feature) ? '请先在“我的行程”打开或创建行程，再使用此功能。' : '';
 }
 function selectFeature(feature) {
+  journalUI.mobileMap=false;
   collectionState.feature = feature;
   if (feature === 'meeting') state.workflowMode = 'meeting';
-  if (feature === 'route') state.workflowMode = 'route';
+  if (feature === 'route' || feature === 'import') state.workflowMode = 'route';
   updateFlowUI();
   if (feature === 'saved') refreshSavedPlaces(0);
   if (feature === 'assistant') {
     document.getElementById('discoveryCity').value ||= state.currentCity || '';
-    document.getElementById('discoveryStart').value ||= state.currentTrip?.planned_start_at ? isoToLocalInput(state.currentTrip.planned_start_at) : '';
-    document.getElementById('discoveryEnd').value ||= state.currentTrip?.planned_end_at ? isoToLocalInput(state.currentTrip.planned_end_at) : '';
+    document.getElementById('discoveryStart').value ||= state.currentTrip?.planned_start_at ? toDateTimeLocal(state.currentTrip.planned_start_at) : '';
+    document.getElementById('discoveryEnd').value ||= state.currentTrip?.planned_end_at ? toDateTimeLocal(state.currentTrip.planned_end_at) : '';
   }
 }
 function clearCollectionState() {
@@ -2667,10 +2917,12 @@ async function searchSavedPlaces() {
 function favoriteDestination(id) { const p = state.destinations.find(x => x.id === id); if (p) fillSavedEditor(p); }
 async function importSelections(places, version) {
   if (!state.tripId) throw new Error('请先在“我的行程”打开一个行程');
-  const result = await api('/trips/' + state.tripId + '/places/import','POST',{places, expected_version: version});
+  const tripId = state.tripId, userId = state.user?.id;
+  const result = await api('/trips/' + tripId + '/places/import','POST',{places, expected_version: version});
+  if (!acceptTripVersion(tripId, userId, result.input_version)) return;
   await refreshDestinations();
+  if (!acceptTripVersion(tripId, userId, result.input_version)) return;
   if (state.itinerary) { state.itinerary.is_stale=true; renderItinerary(); }
-  if (state.currentTrip) state.currentTrip.input_version = result.input_version;
   toast(result.replayed ? '这些地点已加入，不会重复添加' : '已加入候选地点，请由发起人确认必去/可选');
 }
 async function importSavedPlace(index) {
@@ -2767,7 +3019,13 @@ async function prepareDiscoveryRoute() {
   const selected = [...document.querySelectorAll('input[name=discoverySelection]:checked')]
     .map(input => result.recommendations[Number(input.value)].selection);
   if (!selected.length) return toast('请先勾选地点', true);
-  if (!confirm('将选中地点设为必去，保存推荐时段，并重新生成路线？原有必去/可选地点会一起参与规划，顺序和耗时可能与推荐预览不同。最终方案仍需另外确认。')) return;
+  const confirmationTripId=state.tripId, confirmationUserId=state.user?.id;
+  if (!await confirmJournalAction({
+    title:'接入半日游路线',
+    message:'将选中地点设为必去，保存推荐时段，并重新生成路线。原有必去/可选地点会一起参与规划，顺序和耗时可能与预览不同。最终方案仍需另外确认。',
+    confirmLabel:'保存并生成路线',
+  })) return;
+  if(state.tripId!==confirmationTripId || state.user?.id!==confirmationUserId || collectionState.discovery!==result)return;
   const button = document.getElementById('prepareDiscoveryButton');
   if (button.disabled) return;
   button.disabled = true;
@@ -2788,7 +3046,9 @@ async function prepareDiscoveryRoute() {
     const plan = await api('/trips/' + tripId + '/itinerary-plans', 'POST', {});
     if (state.user?.id !== userId || state.tripId !== tripId) return;
     state.itinerary = plan;
+    refreshRouteComparison();
     renderItinerary(); drawAll();
+    setJournalStep(2);
     document.getElementById('planLog').textContent = '新路线已生成；请查看全部时间冲突及估算提示，再确认最终方案。';
     toast('推荐已接入路线规划');
   } catch (e) {
