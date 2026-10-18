@@ -546,6 +546,7 @@ const state = {
   editingFeedbackId: null,
   llmUsage: null,
   parseSessionId: null,
+  parseRequestToken: null,
   parseParser: '',
   pendingImportedFeedback: null,
   preferences: null,
@@ -595,6 +596,7 @@ async function api(path, method = 'GET', body = null) {
       throw new Error('登录已过期，请重新登录');
     }
     const error = new Error(typeof data.detail === 'string' ? data.detail : '输入格式不正确，请检查');
+    error.status = resp.status;
     error.retryAfter = Number(resp.headers.get('Retry-After')) || 0;
     throw error;
   }
@@ -913,6 +915,7 @@ function clearTripState() {
   state.editingFeedbackId = null;
   state.llmUsage = null;
   state.parseSessionId = null;
+  state.parseRequestToken = null;
   state.parseParser = '';
   state.pendingImportedFeedback = null;
   state.commentSummary = null;
@@ -1660,6 +1663,24 @@ async function addDestination() {
   if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('停留时间应为 5～720 分钟', true);
   if (Boolean(windowStart) !== Boolean(windowEnd)) return toast('固定到访开始和结束时间必须同时填写', true);
   if (windowStart && new Date(windowEnd) <= new Date(windowStart)) return toast('固定到访结束时间必须晚于开始时间', true);
+  if (state.pendingImportedFeedback) {
+    const item = state.pendingImportedFeedback.item;
+    const saved = await submitImportedConfirmation(item, {
+      name, address: address || null, lat: state.picked.lat, lng: state.picked.lng,
+      category: item.category || null, expected_stay_min: stay,
+      visit_window_start: windowStart ? new Date(windowStart).toISOString() : null,
+      visit_window_end: windowEnd ? new Date(windowEnd).toISOString() : null,
+      note: importedDestinationNote(item),
+    }, 'manual');
+    if (saved && state.pendingImportedFeedback?.item === item) {
+      state.pendingImportedFeedback = null;
+      document.getElementById('destinationName').value = '';
+      document.getElementById('destinationAddress').value = '';
+      document.getElementById('destinationWindowStart').value = '';
+      document.getElementById('destinationWindowEnd').value = '';
+    }
+    return;
+  }
   try {
     const created = await api(`/trips/${state.tripId}/destinations`, 'POST', {
       name, address: address || null, lat: state.picked.lat, lng: state.picked.lng,
@@ -1667,18 +1688,6 @@ async function addDestination() {
       visit_window_start: windowStart ? new Date(windowStart).toISOString() : null,
       visit_window_end: windowEnd ? new Date(windowEnd).toISOString() : null,
     });
-    if (state.pendingImportedFeedback) {
-      const pending = state.pendingImportedFeedback;
-      await recordParseFeedback(pending.item, 'edited', placeFeedbackSnapshot({
-        ...created, city: pending.item.city || null, resolution_source: 'manual_map_confirmation',
-      }));
-      clearCommentAssignmentsForCandidate(pending.item.parse_candidate_id);
-      state.importedCandidates = state.importedCandidates.filter(
-        item => item.parse_candidate_id !== pending.item.parse_candidate_id
-      );
-      state.pendingImportedFeedback = null;
-      renderSharedTextResults();
-    }
     document.getElementById('destinationName').value = '';
     document.getElementById('destinationAddress').value = '';
     document.getElementById('destinationWindowStart').value = '';
@@ -1873,24 +1882,33 @@ async function parseSharedText() {
   if (text.length < 2) return toast('请粘贴包含地点的分享文本', true);
   if (!Number.isInteger(stay) || stay < 5 || stay > 720) return toast('默认停留时间应为 5～720 分钟', true);
   state.llmUsage = null;
+  const tripId = state.tripId, userId = state.user?.id;
+  const requestToken = {};
+  state.parseRequestToken = requestToken;
   try {
-    const result = await api(`/trips/${state.tripId}/shared-text/parse`, 'POST', {
+    const result = await api(`/trips/${tripId}/shared-text/parse`, 'POST', {
       text, default_stay_min: stay,
       use_llm: document.getElementById('useLlmParser').checked,
       preferred_city: state.currentCity || document.getElementById('cityInput').value.trim() || null,
       comments_text: commentsText || null,
       source_platform: document.getElementById('sourcePlatform').value,
     });
-    applySharedTextResult(result);
-  } catch (e) { toast(e.message, true); }
+    if (state.tripId === tripId && state.user?.id === userId && state.parseRequestToken === requestToken) applySharedTextResult(result);
+  } catch (e) {
+    if (state.tripId === tripId && state.user?.id === userId && state.parseRequestToken === requestToken) toast(e.message, true);
+  } finally {
+    if (state.parseRequestToken === requestToken) state.parseRequestToken = null;
+  }
 }
 
 function applySharedTextResult(result) {
+  state.parseRequestToken = null;
   state.parseSessionId = result.parse_session_id || null;
   state.parseParser = result.parser || '';
   state.pendingImportedFeedback = null;
   state.importedCandidates = (result.candidates || []).map(item => ({
     ...item, _proposedPlace: placeFeedbackSnapshot(item), _wasEdited: false,
+    _confirmationId: item.parse_candidate_id || crypto.randomUUID(),
   }));
   state.llmUsage = result.llm_requested ? result.llm_usage : null;
   state.commentSummary = result.comment_summary || null;
@@ -1931,6 +1949,8 @@ function renderSharedTextResults() {
   if (!state.importedCandidates.length) { el.innerHTML = usageHtml + commentHtml; return; }
   el.innerHTML = usageHtml + commentHtml + state.importedCandidates.map((item, index) => {
     const located = Number.isFinite(item.lat) && Number.isFinite(item.lng);
+    const statusLabels = {matched:'地图唯一匹配', ambiguous:'需要选择具体地点', not_found:'地图未找到', verification_failed:'地图核验失败', unverified:'尚未核验'};
+    const busy = item._saving ? 'disabled' : '';
     const details = [item.category, item.price, item.reason].filter(Boolean).map(escapeHtml).join(' · ');
     const placeComments = effectivePlaceComments(item);
     const placeCommentsHtml = placeComments ? `<details style="margin-top:6px"><summary>与此地点明确关联的评论：${Number(placeComments.matched_thread_count)} 个楼层，${Number(placeComments.reply_count)} 条回复</summary>
@@ -1938,18 +1958,22 @@ function renderSharedTextResults() {
       ${(placeComments.threads || []).map(thread => `<div class="log">“${escapeHtml(thread.comment)}”${thread.reply_count ? `（${Number(thread.reply_count)} 条回复）` : ''}</div>`).join('')}
       <div class="log">仅关联明确写出地点名称的评论。</div></details>` : '';
     const locationChoices = (item.location_candidates || []).map((place, placeIndex) =>
-      `<button class="vote-btn" onclick="selectImportedLocation(${index}, ${placeIndex})">${escapeHtml(place.name)} · ${escapeHtml(place.district || place.city || '')} · ${escapeHtml(place.address || '')}</button>`
+      `<button class="vote-btn" ${busy} onclick="selectImportedLocation(${index}, ${placeIndex})">${escapeHtml(place.name)} · ${escapeHtml(place.district || place.city || '')} · ${escapeHtml(place.address || '')}</button>`
     ).join('');
     return `<div class="destination-card">
       <div class="destination-title">${escapeHtml(item.name)}</div>
       <div class="muted">${escapeHtml(item.address || '未提取到地址')} · 停留 ${Number(item.expected_stay_min)} 分钟</div>
       ${details ? `<div class="muted">${details}</div>` : ''}
+      <div class="log">${escapeHtml(item._selectionMethod === 'poi' ? '已由你选择具体位置，等待确认' : statusLabels[item.verification_status] || '尚未核验')}</div>
+      ${item.verification_message ? `<div class="muted">${escapeHtml(item.verification_message)}</div>` : ''}
+      ${item._confirmationRequest ? '<div class="log">已提交过确认；重试将使用首次提交的内容，成功后可在地点列表编辑。</div>' : ''}
       ${placeCommentsHtml}
       <div class="${located ? 'log' : 'err'}">${located ? `已定位：${Number(item.lng).toFixed(6)}, ${Number(item.lat).toFixed(6)}${item.resolution_source === 'amap_share_url' ? '（高德分享位置）' : ''}` : '无法可靠定位，需要手动地图选点'}</div>
       ${!located && locationChoices ? `<div class="log">请选择具体门店：</div><div class="destination-actions">${locationChoices}</div>` : ''}
       <div class="destination-actions">
-        ${located ? `<button onclick="addImportedDestination(${index})">确认并加入地点</button>` : `<button onclick="copyImportedToManual(${index})">转到手动选点</button>`}
-        <button class="vote-btn" onclick="rejectImportedDestination(${index})">忽略此候选</button>
+        ${located || item._confirmationRequest ? `<button ${busy} onclick="addImportedDestination(${index})">${item._saving ? '确认中…' : item._confirmationRequest ? '重试原确认' : '确认并加入地点'}</button>` : ''}
+        <button class="vote-btn" ${busy} onclick="copyImportedToManual(${index})">编辑并手动选点</button>
+        <button class="vote-btn" ${busy} onclick="rejectImportedDestination(${index})">忽略此候选</button>
       </div>
     </div>`;
   }).join('');
@@ -2000,13 +2024,15 @@ function effectivePlaceComments(item) {
 function selectImportedLocation(itemIndex, placeIndex) {
   const item = state.importedCandidates[itemIndex];
   const place = item?.location_candidates?.[placeIndex];
-  if (!item || !place) return;
+  if (!item || !place || item._saving) return;
+  if (item._confirmationRequest) return toast('请先重试原确认，保存后在地点列表修改', true);
   Object.assign(item, {
-    name: place.name || item.name, address: place.address || item.address,
+    name: place.name || item.name, address: place.address || '', city: place.city || item.city,
     category: place.category || item.category, lat: Number(place.lat), lng: Number(place.lng),
     formatted_address: place.address || '', resolved: true,
     resolution_error: null, resolution_source: 'poi_confirmed',
-    _wasEdited: true,
+    poi_id: place.poi_id || null, _selectionMethod: 'poi', _wasEdited: true,
+    verification_message: '已选择具体地点，请查看地图后确认；此操作不会自动保存',
   });
   renderSharedTextResults();
   setPickedLocation(Number(place.lat), Number(place.lng), { address: place.address || place.name, center: true });
@@ -2015,23 +2041,61 @@ function selectImportedLocation(itemIndex, placeIndex) {
 
 async function addImportedDestination(index) {
   const item = state.importedCandidates[index];
-  if (!item || !Number.isFinite(item.lat) || !Number.isFinite(item.lng)) return;
+  if (!item || (!item._confirmationRequest && (!Number.isFinite(item.lat) || !Number.isFinite(item.lng)))) return;
+  await submitImportedConfirmation(item, {
+    name: item.name, address: item.formatted_address || item.address || null, lat: item.lat, lng: item.lng,
+    category: item.category || null, expected_stay_min: item.expected_stay_min,
+    note: importedDestinationNote(item),
+  }, item._selectionMethod || (item.resolution_source === 'amap_share_url' ? 'share' : 'poi'));
+}
+
+function importedDestinationNote(item) {
+  return [item.reason, item.price ? `人均：${item.price}` : '', item.source_url ? `来源：${item.source_url}` : ''].filter(Boolean).join('；').slice(0, 500) || null;
+}
+
+async function submitImportedConfirmation(item, destination, selectionMethod) {
+  if (!state.tripId || !state.user || item._saving) return false;
+  const tripId = state.tripId, userId = state.user.id, sessionId = state.parseSessionId;
+  item._confirmationId ||= item.parse_candidate_id || crypto.randomUUID();
+  item._confirmationRequest ||= {tripId, userId, confirmation: {
+    confirmation_id: item._confirmationId, confirmed: true,
+    selection_method: selectionMethod, destination,
+  }};
+  const request = item._confirmationRequest;
+  if (request.tripId !== tripId || request.userId !== userId) return false;
+  item._saving = true;
+  renderSharedTextResults();
   try {
-    const created = await api(`/trips/${state.tripId}/destinations`, 'POST', {
-      name: item.name, address: item.address || null, lat: item.lat, lng: item.lng,
-      category: item.category || null, expected_stay_min: item.expected_stay_min,
-      note: [item.reason, item.price ? `人均：${item.price}` : '', item.source_url ? `来源：${item.source_url}` : ''].filter(Boolean).join('；') || null,
+    const result = await api(`/trips/${tripId}/places/import`, 'POST', {
+      expected_version: state.currentTrip?.input_version,
+      places: [{confirmation: request.confirmation}],
     });
+    if (!acceptTripVersion(tripId, userId, result.input_version) || state.parseSessionId !== sessionId) return false;
     await recordParseFeedback(
-      item, item._wasEdited ? 'edited' : 'accepted',
-      placeFeedbackSnapshot({...created, city: item.city || null, resolution_source: item.resolution_source || null}),
+      item, item._wasEdited || selectionMethod === 'manual' ? 'edited' : 'accepted',
+      placeFeedbackSnapshot({...request.confirmation.destination, city: item.city || null,
+        resolution_source: request.confirmation.selection_method === 'manual' ? 'manual_map_confirmation' : item.resolution_source}),
     );
+    if (state.tripId !== tripId || state.user?.id !== userId || state.parseSessionId !== sessionId) return false;
     clearCommentAssignmentsForCandidate(item.parse_candidate_id);
-    state.importedCandidates.splice(index, 1);
+    state.importedCandidates = state.importedCandidates.filter(candidate => candidate !== item);
     renderSharedTextResults();
     await refreshDestinations();
-    toast('地点已作为候选加入');
-  } catch (e) { toast(e.message, true); }
+    if (state.tripId !== tripId || state.user?.id !== userId) return false;
+    toast(result.replayed ? '该确认已保存，没有重复添加' : '地点已作为候选加入');
+    return true;
+  } catch (e) {
+    if (state.tripId === tripId && state.user?.id === userId && state.parseSessionId === sessionId) {
+      const message = e.status === 410 ? '该确认的地点已被删除，不会重新创建；可忽略此候选'
+        : e.status ? e.message : '网络或服务响应异常，确认结果可能已保存；请重试原确认';
+      toast(message, true);
+      await refreshDestinations();
+    }
+    return false;
+  } finally {
+    item._saving = false;
+    if (state.tripId === tripId && state.user?.id === userId && state.parseSessionId === sessionId) renderSharedTextResults();
+  }
 }
 
 function placeFeedbackSnapshot(item) {
@@ -2067,10 +2131,12 @@ async function recordParseFeedback(item, action, finalPlace = null) {
 
 async function rejectImportedDestination(index) {
   const item = state.importedCandidates[index];
-  if (!item) return;
+  if (!item || item._saving) return;
+  const tripId = state.tripId, userId = state.user?.id, sessionId = state.parseSessionId;
   await recordParseFeedback(item, 'rejected');
+  if (state.tripId !== tripId || state.user?.id !== userId || state.parseSessionId !== sessionId) return;
   clearCommentAssignmentsForCandidate(item.parse_candidate_id);
-  state.importedCandidates.splice(index, 1);
+  state.importedCandidates = state.importedCandidates.filter(candidate => candidate !== item);
   if (state.pendingImportedFeedback?.item?.parse_candidate_id === item.parse_candidate_id) {
     state.pendingImportedFeedback = null;
   }
@@ -2080,11 +2146,30 @@ async function rejectImportedDestination(index) {
 
 function copyImportedToManual(index) {
   const item = state.importedCandidates[index];
-  if (!item) return;
+  if (!item || item._saving) return;
+  if (item._confirmationRequest) return toast('请先重试原确认，保存后在地点列表修改', true);
   document.getElementById('destinationName').value = item.name || '';
   document.getElementById('destinationAddress').value = item.address || '';
   document.getElementById('destinationStay').value = item.expected_stay_min || 60;
+  document.getElementById('destinationWindowStart').value = '';
+  document.getElementById('destinationWindowEnd').value = '';
+  state.picked = null;
+  item.verification_status = 'unverified';
+  item.resolved = false;
+  item.lat = null; item.lng = null;
+  item.location_candidates = [];
+  item.poi_id = null;
+  item.formatted_address = null;
+  item.resolution_source = null;
+  item.resolution_error = null;
+  item.verification_error_code = null;
+  item.verification_complete = false;
+  item._selectionMethod = null;
+  item.verification_message = '正在编辑，请在地图上重新选择位置';
+  item._wasEdited = true;
   state.pendingImportedFeedback = { item };
+  updatePickedStatus();
+  renderSharedTextResults();
   toast('已填入地点表单，请在地图上精确选择入口后添加');
 }
 

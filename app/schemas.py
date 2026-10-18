@@ -328,15 +328,39 @@ class DestinationCommentBody(BaseModel):
     content: str = Field(min_length=1, max_length=1000)
 
 
+class PlaceVerification(BaseModel):
+    """Map evidence only; never an authorization to persist a destination."""
+    status: Literal["matched", "ambiguous", "not_found", "verification_failed", "unverified"]
+    candidates: list[dict] = Field(default_factory=list)
+    selected: dict | None = None
+    error_code: str | None = None
+    message: str | None = None
+    complete: bool = False
+    source: str | None = None
+
+
+class ConfirmedDestination(DestinationCreate):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", allow_inf_nan=False)
+
+
+class TextPlaceConfirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmation_id: UUID
+    confirmed: Literal[True]
+    selection_method: Literal["poi", "manual", "share"]
+    destination: ConfirmedDestination
+
+
 class PlaceSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     saved_place_id: int | None = Field(default=None, gt=0)
     revision: int | None = Field(default=None, ge=1)
     place: SavedPlaceCreate | None = None
+    confirmation: TextPlaceConfirmation | None = None
 
     @model_validator(mode="after")
     def valid_source(self):
-        if (self.saved_place_id is None) == (self.place is None):
+        if sum(value is not None for value in (self.saved_place_id, self.place, self.confirmation)) != 1:
             raise ValueError("选择一个收藏或确认的地点")
         if self.saved_place_id is not None and self.revision is None:
             raise ValueError("收藏需要版本")
@@ -352,6 +376,9 @@ class PlaceBatchImport(BaseModel):
 
     @model_validator(mode="after")
     def valid_planning_handoff(self):
+        if any(p.confirmation is not None for p in self.places):
+            if len(self.places) != 1 or self.confirm_for_planning or self.planning_settings is not None:
+                raise ValueError("文本确认每次仅提交一个地点，不同时确认规划参数")
         if self.confirm_for_planning != (self.planning_settings is not None):
             raise ValueError("准备路线需同时提供地点确认和规划参数")
         return self

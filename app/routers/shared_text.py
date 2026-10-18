@@ -44,12 +44,22 @@ async def parse_text(
     llm_candidates = []
     llm_used = False
     llm_error = None
+    llm_status = "not_requested"
+    llm_error_code = None
+    llm_warnings = []
     if body.use_llm:
         llm_input = imported["text"]
         if imported["comments"]:
-            llm_input += "\n\n【用户粘贴的评论，仅用于提取评论中明确提到的地点】\n" + imported["comments"]
+            # Keep evidence restricted to user-provided content, not headings
+            # inserted by the server (which could themselves become a name).
+            llm_input += "\n\n" + imported["comments"]
         llm_candidates, llm_error = await llm_place_parser.parse(llm_input)
-        llm_used = bool(llm_candidates)
+        # A valid empty list is a successful extraction, not a request to run
+        # the permissive legacy rules on a sentence that has no place names.
+        llm_used = llm_error is None
+        llm_status = ("success" if llm_candidates else "empty") if llm_used else "failed"
+        llm_error_code = llm_place_parser.last_parse_error_code
+        llm_warnings = llm_place_parser.last_parse_warnings
 
     async def resolve_link(url: str) -> tuple[dict | None, str | None]:
         place = await amap.resolve_amap_share_url(url)
@@ -61,9 +71,20 @@ async def parse_text(
     warnings = list(result["warnings"])
     if body.use_llm and llm_error:
         warnings.append(f"AI 增强未生效，已使用规则解析：{llm_error}")
+    if llm_warnings:
+        warnings.append("AI候选中缺少原文依据的名称已剔除，其余无依据字段已清空；请确认地点信息")
     for (place, error), url in zip(link_results, amap_urls):
         if not place:
             warnings.append(f"高德链接解析失败：{error}（{url[:100]}）")
+            resolved.append({
+                "name": "高德分享地点", "address": "", "category": "", "price": "", "reason": "来自高德地图分享链接",
+                "expected_stay_min": body.default_stay_min, "source_url": url,
+                "lat": None, "lng": None, "resolved": False, "formatted_address": None,
+                "resolution_error": "分享链接核验失败，请重试或手动选点", "resolution_source": None,
+                "verification_status": "verification_failed", "verification_error_code": "share_resolution_failed",
+                "verification_message": "分享链接核验失败，请重试或手动选点", "verification_complete": False,
+                "location_candidates": [],
+            })
             continue
         resolved.append({
             "name": place["name"], "address": place["address"], "category": "",
@@ -72,6 +93,11 @@ async def parse_text(
             "lat": place["lat"], "lng": place["lng"],
             "formatted_address": place["address"], "resolved": True,
             "resolution_error": None, "resolution_source": "amap_share_url",
+            "poi_id": place.get("poi_id"),
+            "verification_status": "unverified",
+            "verification_error_code": None,
+            "verification_message": "分享链接携带的位置尚未独立核验，请在地图上查看后确认",
+            "verification_complete": False,
         })
 
     # LLM 成功时采用其文本候选，避免规则把整句自然语言误合并成额外地点；
@@ -86,20 +112,9 @@ async def parse_text(
 
     for candidate in text_candidates:
         city = str(candidate.get("city") or body.preferred_city or _infer_city(body.text)).strip()
-        query = candidate["name"]
-        poi_candidates = await amap.search_pois(query, city, 5) if city else []
-        exact = [
-            place for place in poi_candidates
-            if _normalized_place_name(place["name"]) == _normalized_place_name(candidate["name"])
-        ]
-        # 唯一精确名称可自动定位；其他情况必须让用户从 POI 候选中确认。
-        selected = exact[0] if len(exact) == 1 else None
-        if not poi_candidates and candidate.get("address"):
-            location = await amap.geocode(f"{city}{candidate['address']}" if city else candidate["address"])
-            selected = ({
-                "name": candidate["name"], "address": candidate["address"], "city": city,
-                "district": "", "category": candidate.get("category", ""), **location,
-            } if location else None)
+        verification = await amap.verify_place(candidate["name"], city, candidate.get("address") or "")
+        poi_candidates = verification["candidates"]
+        selected = verification["selected"]
         item = {
             **candidate,
             "city": city,
@@ -107,12 +122,14 @@ async def parse_text(
             "lng": selected["lng"] if selected else None,
             "formatted_address": selected.get("address", "") if selected else None,
             "resolved": bool(selected),
-            "resolution_error": None if selected else (
-                "找到多个同名或相似地点，请选择具体门店" if poi_candidates
-                else (amap.last_error or "无法确定地点坐标，请补充城市或详细地址")
-            ),
-            "resolution_source": "poi_exact" if selected and poi_candidates else ("geocode" if selected else None),
+            "resolution_error": None if selected else verification["message"],
+            "resolution_source": ("poi_exact" if verification["source"] == "poi" else "geocode") if selected else None,
             "location_candidates": poi_candidates,
+            "poi_id": selected.get("poi_id") if selected else None,
+            "verification_status": verification["status"],
+            "verification_error_code": verification["error_code"],
+            "verification_message": verification["message"],
+            "verification_complete": verification["complete"],
         }
         duplicate = selected and any(
             abs(float(existing["lat"]) - float(selected["lat"])) < 0.00001
@@ -122,7 +139,7 @@ async def parse_text(
         if not duplicate:
             resolved.append(item)
 
-    if resolved:
+    if resolved or llm_used:
         warnings = [warning for warning in warnings if not warning.startswith("没有识别到地点")]
     parser = "rules_v1+amap_share_v1" + ("+llm_v1" if llm_used else "")
     parse_session_id = str(uuid4())
@@ -134,5 +151,7 @@ async def parse_text(
         "source_platform": body.source_platform, "comment_summary": comment_summary,
         "source_adapter": imported["adapter"],
         "llm_requested": body.use_llm, "llm_used": llm_used,
+        "llm_status": llm_status, "llm_error_code": llm_error_code,
+        "llm_warnings": llm_warnings,
         "llm_usage": llm_place_parser.last_usage if body.use_llm else None,
     }

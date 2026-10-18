@@ -7,6 +7,7 @@
 """
 import asyncio
 import html
+import math
 import re
 import time
 from .agent_trace import traced_stage
@@ -17,6 +18,7 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 import httpx
 
 from ..config import settings
+from ..schemas import PlaceVerification
 
 # 停车场 POI 搜索关键词（高德 type 码 150900 在部分区域覆盖不全，用关键词更稳）
 _PARKING_KEYWORD = "停车场"
@@ -29,6 +31,7 @@ class AmapClient:
         # 有真实 key 才算可用（.env 占位符 "your_..." 视为不可用）
         self.available = bool(self.key) and not self.key.startswith("your_")
         self._last_error: ContextVar[str | None] = ContextVar(f"amap_last_error_{id(self)}", default=None)
+        self._last_error_code: ContextVar[str | None] = ContextVar(f"amap_error_code_{id(self)}", default=None)
         self._city_cache: dict[tuple[float, float], str] = {}
         self._client: httpx.AsyncClient | None = None
         self._request_limit = asyncio.Semaphore(5)
@@ -75,13 +78,16 @@ class AmapClient:
     @traced_stage("map.request", outcome="nullable")
     async def _get(self, path: str, params: dict) -> dict | None:
         self.last_error = None
+        self._last_error_code.set(None)
         if not self.available:
             self.last_error = "后端未加载 AMAP_API_KEY"
+            self._last_error_code.set("not_configured")
             self._record_request(path, "unavailable")
             return None
         retry_after = max(0, round(self._quota_blocked_until - time.monotonic()))
         if retry_after > 0:
             self.last_error = f"高德接口配额已超限，已暂停新请求（约 {retry_after} 秒后重试）"
+            self._last_error_code.set("quota_exceeded")
             self._record_request(path, "quota_blocked")
             return None
         params = {**params, "key": self.key}
@@ -96,23 +102,39 @@ class AmapClient:
                 break
             except httpx.TimeoutException:
                 self.last_error = f"高德接口请求超时（已尝试 {attempt + 1} 次）"
+                self._last_error_code.set("timeout")
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                self.last_error = f"高德接口 HTTP 请求失败（{status}）"
+                self._last_error_code.set("rate_limited" if status == 429 else
+                    "authentication_failed" if status in (401, 403) else
+                    "service_unavailable" if status >= 500 else "http_error")
             except httpx.HTTPError as exc:
                 self.last_error = f"高德接口网络错误：{type(exc).__name__}"
+                self._last_error_code.set("network_error")
             except ValueError:
                 self.last_error = "高德接口返回了无法解析的数据"
+                self._last_error_code.set("invalid_response")
                 return None
             if attempt == 0:
                 await asyncio.sleep(0.25)
         if data is None:
             self._record_request(path, "network_failure")
             return None
+        if not isinstance(data, dict):
+            self.last_error = "高德接口返回了无法解析的数据"
+            self._last_error_code.set("invalid_response")
+            return None
         if data.get("status") != "1":
             infocode = str(data.get("infocode") or "")
             self.last_error = f"高德接口失败：{data.get('info') or '未知错误'}（{infocode or '无错误码'}）"
             self._record_request(path, f"api_error_{infocode or 'unknown'}")
+            self._last_error_code.set("quota_exceeded" if infocode in ("10003", "10004", "10021") else "provider_error")
             if infocode == "10021":
                 self._quota_blocked_until = time.monotonic() + self._quota_cooldown_seconds
             return None
+        self.last_error = None
+        self._last_error_code.set(None)
         self._record_request(path, "success")
         return data
 
@@ -289,6 +311,101 @@ class AmapClient:
             return None
 
     # ---- POI / 地理编码 / 停车场 ----
+
+    @staticmethod
+    def _verification_failure(code: str = "invalid_response") -> dict:
+        return PlaceVerification(status="verification_failed", error_code=code,
+                                 message="地图核验失败，请重试或手动选点").model_dump()
+
+    @staticmethod
+    def _verified_coordinates(location: str) -> dict:
+        lng, lat = (float(value) for value in location.split(","))
+        if not (math.isfinite(lat) and math.isfinite(lng) and -90 <= lat <= 90 and -180 <= lng <= 180):
+            raise ValueError("Invalid coordinates")
+        return {"lat": lat, "lng": lng}
+
+    async def _verification_query(self, path: str, params: dict, field: str) -> dict:
+        """Bounded map query retaining completeness; no first-result selection."""
+        try:
+            data = await self._get(path, params)
+            if data is None:
+                return self._verification_failure(self._last_error_code.get() or "provider_error")
+            raw = data[field]
+            if not isinstance(raw, list):
+                raise ValueError("Invalid candidate list")
+            count = data.get("count")
+            total = int(count) if isinstance(count, (str, int)) and not isinstance(count, bool) else None
+            if total is not None and (total < len(raw) or total < 0):
+                raise ValueError("Invalid total count")
+            if total and not raw:
+                raise ValueError("Count indicates candidates but none were returned")
+            candidates = []
+            for item in raw:
+                coords = self._verified_coordinates(item["location"])
+                name = item.get("name") if field == "pois" else item.get("formatted_address")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("Missing candidate name")
+                address = item.get("address") if field == "pois" else name
+                map_city = item.get("cityname", "") if field == "pois" else item.get("city", "")
+                # The requested city is not evidence that the provider matched it.
+                if not isinstance(map_city, str):
+                    map_city = ""
+                candidates.append({
+                    "name": name, "address": address if isinstance(address, str) else "",
+                    "city": map_city,
+                    "district": item.get("adname", "") if field == "pois" else item.get("district", ""),
+                    "category": item.get("type", "") if field == "pois" else "",
+                    "poi_id": item.get("id") if field == "pois" else None,
+                    "level": item.get("level", ""), **coords,
+                })
+            complete = total == len(raw)
+            return PlaceVerification(status="ambiguous" if candidates else "not_found",
+                                     candidates=candidates, complete=complete,
+                                     message=None if candidates else "地图未找到地点，请补充条件或手动选点",
+                                     source="poi" if field == "pois" else "geocode").model_dump()
+        except (KeyError, TypeError, ValueError, AttributeError, httpx.HTTPError):
+            return self._verification_failure()
+
+    async def search_pois_verified(self, keywords: str, city: str, limit: int = 5) -> dict:
+        return await self._verification_query("/v3/place/text", {
+            "keywords": keywords, "city": city, "citylimit": "true", "offset": str(limit),
+            "page": "1", "extensions": "base"}, "pois")
+
+    async def geocode_verified(self, address: str) -> dict:
+        return await self._verification_query("/v3/geocode/geo", {"address": address}, "geocodes")
+
+    async def verify_place(self, name: str, city: str = "", address: str = "") -> dict:
+        """Conservative uniqueness. Ambiguity is resolved only by an explicit user selection."""
+        def normalized(value):
+            return re.sub(r"[\s\W_]", "", str(value).casefold())
+
+        def same_city(value):
+            return bool(city) and normalized(value).removesuffix("市") == normalized(city).removesuffix("市")
+
+        if not city and not address:
+            return PlaceVerification(status="unverified", message="请补充城市或地址，或手动选点").model_dump()
+        result = await self.search_pois_verified(name, city) if city else None
+        # A failed POI query must not be hidden by a subsequent geocode request.
+        if result and result["status"] == "verification_failed":
+            return result
+        if (result is None or not result["candidates"]) and address:
+            result = await self.geocode_verified(f"{city}{address}" if city else address)
+        if result["status"] in ("verification_failed", "not_found"):
+            return result
+        choices = result["candidates"]
+        if result["source"] == "geocode":
+            for place in choices:
+                place["name"] = name  # Geocoding confirms an address, not a POI's official name.
+        if result["complete"] and len(choices) == 1:
+            place = choices[0]
+            address_matches = not address or normalized(address) in normalized(place["address"])
+            precise = (normalized(place["name"]) == normalized(name) if result["source"] == "poi"
+                       else place["level"] in ("门牌号", "兴趣点") and bool(address))
+            if same_city(place["city"]) and address_matches and precise:
+                result.update(status="matched", selected=place)
+                return result
+        result["message"] = "请核对城市、地址并选择具体地点，或手动选点"
+        return result
 
     async def search_pois(self, keywords: str, city: str, limit: int = 10) -> list[dict]:
         """在指定城市内搜索地址/POI，供用户从多个候选项中人工确认。"""

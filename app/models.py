@@ -288,7 +288,10 @@ class TripPlaceImport(Base):
     trip_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trips.id", ondelete="CASCADE"))
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     source_key: Mapped[str] = mapped_column(String(64))
-    destination_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("trip_destinations.id", ondelete="CASCADE"))
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    destination_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("trip_destinations.id", ondelete="SET NULL",
+                              name="trip_place_imports_destination_id_fkey"), nullable=True)
 
 
 class AccountRecoveryCode(Base):
